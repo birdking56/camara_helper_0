@@ -1,0 +1,55 @@
+# ================= Pango PDS 构建产物（只排除工程根目录的流程输出） =================
+/synthesize/
+/synthesis/
+/place_route/
+/generate_bitstream/
+/report_timing/
+/compile/
+/device_map/
+/constraint_check/
+/log/
+/logbackup/
+
+# IP 内部残留的流程输出副本
+**/synthesize/
+**/compile/
+**/flow.log
+**/run.log
+
+# 日志、锁文件与备份
+*.log
+*.pds.lock
+*.bak
+*.bak_*
+
+# ================= 仿真产物 =================
+/sim/build/
+/sim/lib/
+*.qdb
+*.qpg
+*.qtl
+*.wlf
+*.vcd
+*.out
+*.err
+*.vec
+/work/
+transcript
+
+# ================= Python =================
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ================= 系统 / 编辑器 =================
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# ================= 开发过程日志（不入库） =================
+docs/交接_*.md
+docs/interface_v1/开发日志.md
+docs/archive/

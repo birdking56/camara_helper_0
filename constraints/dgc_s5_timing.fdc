@@ -1,0 +1,73 @@
+#-----------------------------------------------------------------------------
+# dgc_s5_timing.fdc - timing exceptions for the integrated dgc_top_sys
+#
+# Only the genuinely asynchronous clock domains and reset distribution are
+# covered here. The intra-proc datapath (dgc_map_pipeline, dgc_unpack,
+# dgc_bilinear, dgc_ddr_wr_adapter) is deliberately NOT relaxed: those paths are
+# being fixed in RTL and must close at 225/125 MHz on their own.
+#
+# Clock names are the PDS-inferred names of the three PLL outputs. They are
+# listed explicitly (not wildcarded) so a typo fails loudly in the constraint
+# check instead of silently disabling the exception.
+#-----------------------------------------------------------------------------
+
+# NOTE (2026-10-23 static review): this set_clock_groups form was reported as
+# SDC-2027 and ignored by PDS 2022.2-SP3 (PLL inferred clocks are not visible at
+# that point). It also incorrectly put vout and vout5x in separate asynchronous
+# groups although they come from the same HDMI PLL and are 1:5 related. Do not
+# re-enable without explicit generated-clock definitions and a CDC audit; the
+# audited exceptions below are cell-targeted instead.
+# set_clock_groups -name dgc_s5_async -asynchronous \
+#     -group [get_clocks {*CLKOUT3_Inferred}] \
+#     -group [get_clocks {*CLKOUT2_Inferred}] \
+#     -group [get_clocks {*CLKOUT1_Inferred}] \
+#     -group [get_clocks {*CLKOUT0_Inferred}] \
+#     -group [get_clocks {pixclk_in}]
+
+# Reset release synchronisers: the async reset pin of the first synchroniser is
+# not a data path. The reset itself is asynchronous-assert / synchronous-release
+# by construction (dgc_rst_sync), so recovery/removal on that pin is not timed.
+#
+# Cell-based exceptions: get_pins wildcards did not match in PDS 2022.2
+# (CommandTiming-0057), but get_cells -hier does. These are the same CDC/reset
+# relationships, expressed on the register cells instead of leaf pins.
+set_false_path -from [get_cells -hier {*tick_tgl*}] \
+               -to   [get_cells -hier {*tick_sync*}]
+
+set_false_path -from [get_cells -hier {*u_mb_offer*payload_q*}] \
+               -to   [get_cells -hier {*u_mb_offer*dst_payload_q*}]
+set_false_path -from [get_cells -hier {*u_mb_srel*payload_q*}] \
+               -to   [get_cells -hier {*u_mb_srel*dst_payload_q*}]
+
+# toggle/ack synchroniser chains are CDC control, not single-cycle data
+set_false_path -from [get_cells -hier {*u_mb_offer*req_tgl_q*}] \
+               -to   [get_cells -hier {*u_mb_offer*req_sync_q*}]
+set_false_path -from [get_cells -hier {*u_mb_offer*dst_valid_q*}] \
+               -to   [get_cells -hier {*u_mb_offer*ack_sync_q*}]
+set_false_path -from [get_cells -hier {*u_mb_offer*ack_tgl_q*}] \
+               -to   [get_cells -hier {*u_mb_offer*ack_sync_q*}]
+set_false_path -from [get_cells -hier {*u_mb_srel*req_tgl_q*}] \
+               -to   [get_cells -hier {*u_mb_srel*req_sync_q*}]
+set_false_path -from [get_cells -hier {*u_mb_srel*ack_tgl_q*}] \
+               -to   [get_cells -hier {*u_mb_srel*ack_sync_q*}]
+
+set_false_path -from [get_cells -hier {*settle_cnt*}] \
+               -to   [get_cells -hier {*u_rst_*sync_q*}]
+
+# Narrower than the old *rgb2tmds* wildcard: only the encoder reset input and
+# the OSERDES serializer reset are asynchronous reset endpoints. Do not exclude
+# TMDS data paths between vout and vout5x; those clocks are 1:5 related.
+set_false_path -from [get_cells -hier {*u_rst_vout5x*sync_q*}] \
+               -to   [get_cells -hier {*u_rgb2tmds*dataencoder*}]
+set_false_path -from [get_cells -hier {*u_rst_vout5x*sync_q*}] \
+               -to   [get_cells -hier {*u_rgb2tmds*serializer*}]
+
+#-----------------------------------------------------------------------------
+# 2026-11-01 23:05: do NOT try to set the clock uncertainty of the processing
+# PLL output here.  PDS 2022.2-SP3 reads this file before synthesis, when the
+# PLL-inferred clocks do not exist yet, and it treats an unmatched get_clocks in
+# set_clock_uncertainty as a hard error (CommandTiming-0057 / ConstraintEditor-
+# 0046), which aborts the whole synthesize step.  The default 0.150 ns allowance
+# therefore cannot be tightened from this flow.
+#-----------------------------------------------------------------------------
+

@@ -1,0 +1,152 @@
+DGC3 decode: tools\uart_20261103_172505.log
+decoded 16 complete snapshot(s) from 176 report lines
+==============================================================================
+S row  : status=1FFD  T=02FF  cap_frames=25540  cap_aborted=0
+I row  : cap_rows=16  pixclk=148.2 MHz  line_px=1920  frame_lines=1080
+W row  : wa_frames=25540  wa_aborts=0  in_rgb_sum[31:16]=6544  out_rgb_sum[31:16]=7358
+         both RGB sums move -> pixel activity on both sides; repeated images
+         also change rolling sums, so check source fid M0 for freshness
+J row  : jobs=25581  blocks=2960  flags=EC8D  slots=6A
+         job flags: cstate=2 fill_busy=0 samp_busy=1 next_valid=1 aux_bank_busy=1 busy=1 state=1
+G row  : no_pend_us=0  tick_skip=0  underflow=639  reader_flags=E9AE
+         reader: cur_stripe=46 cur_ok=1 frame_ok=1 waiting_first=0 frame_black=0 have_next=1 cur_bank=2 next_bank=3
+K row  : acq_req= 60  acq_got= 60  job_max_us=15799  stripe=62C0  sticky=82FD
+         acquire: 60 requests -> 60 descriptors (the acquire path works;
+         the loss is in pend/start handling, not in the manager)
+         gap_max = 7.54 ms  (frame_done -> next job_start; ~0.5 ms = healthy 60 Hz cadence, ~16.7 ms = a whole display frame lost)
+         K2 (DGC5): pix_sid=49  bank0_sid=48  reading0=0 reading1=0
+         sticky: ack-timeout=1 writer-watchdog=0 reader-rel-overflow=0 reader-vs-discard=0
+
+P/Q/R (per second, 1 LSB = 23.95 us proc / 32.77 us ddr):
+  P0 fill active       26898 LSB =   644.29 ms  ( 64.4 % of the second)
+  P1 wait beats         4598 LSB =   110.14 ms  (17.1 % of fill)
+  P2 wait row channel    920 LSB =    22.04 ms  (3.4 % of fill)
+  P3 wait planner        179 LSB =     4.29 ms  (0.7 % of fill)
+  Q0 fill writes       18129 LSB =   434.25 ms  (67.4 % of fill)
+  Q1 sample active     38719 LSB =   927.44 ms
+  Q2 writer stall       8165 LSB =   195.58 ms  (21.1 % of sample)
+  Q3 sampler stall       198 LSB =     4.74 ms  (0.5 % of sample)
+  R0 AR handshakes     32986 LSB =  4222208 AR/s
+  R1 wait ar_ready         3 LSB =     0.10 ms ddr
+  R2 return starve     12803 LSB =   419.53 ms ddr
+  R3 max in flight         6
+  M0 source fid[15:0]  25125
+  M1 capture frames    25541
+  M2 frame releases    25581
+  M3 alloc drops           0
+  source frame age       416   (M1-M0 modulo 65536)
+  source progress     +0 fid, +60 capture allocations since previous report
+         SOURCE REPEAT while capture advances; sustained repeats indicate a freeze
+  V0 offers consumed    4080
+  V1 offers discarded      0
+  V2 last starvation   0x0080  last starvation: stripe 0 missed the porch (latched history)
+  V3 stripe releases    4080
+
+job budget: J.jobs=25581, jobs/s = 60
+
+VERDICT (rules in docs/DGC3 protocol doc, section 5):
+- fill and sample are both active most of the time; split by the waits below
+- fill time is dominated by actual CACHE WRITES (Q0 = 67% of P0): the cache write port is the floor
+- STALE SOURCE FRAME: the job is 416 frames (6.9 s) behind the capture; look at frame_manager acquire/release and slot states.
+- no new reader underflow since previous report; V2 is latched history
+- R3 = 6: requests do overlap; latency/bandwidth per burst is the exposure.
+==============================================================================
+S row  : status=1FFD  T=02FF  cap_frames=25599  cap_aborted=0
+I row  : cap_rows=1029  pixclk=148.2 MHz  line_px=1920  frame_lines=1080
+W row  : wa_frames=25599  wa_aborts=0  in_rgb_sum[31:16]=15D4  out_rgb_sum[31:16]=252E
+         both RGB sums move -> pixel activity on both sides; repeated images
+         also change rolling sums, so check source fid M0 for freshness
+J row  : jobs=25641  blocks=2960  flags=EC8D  slots=6A
+         job flags: cstate=2 fill_busy=0 samp_busy=1 next_valid=1 aux_bank_busy=1 busy=1 state=1
+G row  : no_pend_us=0  tick_skip=0  underflow=639  reader_flags=E9AE
+         reader: cur_stripe=46 cur_ok=1 frame_ok=1 waiting_first=0 frame_black=0 have_next=1 cur_bank=2 next_bank=3
+K row  : acq_req= 60  acq_got= 60  job_max_us=15799  stripe=62C0  sticky=82FD
+         acquire: 60 requests -> 60 descriptors (the acquire path works;
+         the loss is in pend/start handling, not in the manager)
+         gap_max = 7.54 ms  (frame_done -> next job_start; ~0.5 ms = healthy 60 Hz cadence, ~16.7 ms = a whole display frame lost)
+         K2 (DGC5): pix_sid=49  bank0_sid=48  reading0=0 reading1=0
+         sticky: ack-timeout=1 writer-watchdog=0 reader-rel-overflow=0 reader-vs-discard=0
+
+P/Q/R (per second, 1 LSB = 23.95 us proc / 32.77 us ddr):
+  P0 fill active       26898 LSB =   644.29 ms  ( 64.4 % of the second)
+  P1 wait beats         4597 LSB =   110.11 ms  (17.1 % of fill)
+  P2 wait row channel    920 LSB =    22.04 ms  (3.4 % of fill)
+  P3 wait planner        179 LSB =     4.29 ms  (0.7 % of fill)
+  Q0 fill writes       18129 LSB =   434.25 ms  (67.4 % of fill)
+  Q1 sample active     38717 LSB =   927.40 ms
+  Q2 writer stall       8163 LSB =   195.53 ms  (21.1 % of sample)
+  Q3 sampler stall       198 LSB =     4.74 ms  (0.5 % of sample)
+  R0 AR handshakes     32986 LSB =  4222208 AR/s
+  R1 wait ar_ready         3 LSB =     0.10 ms ddr
+  R2 return starve     12802 LSB =   419.50 ms ddr
+  R3 max in flight         6
+  M0 source fid[15:0]  25125
+  M1 capture frames    25600
+  M2 frame releases    25641
+  M3 alloc drops           0
+  source frame age       475   (M1-M0 modulo 65536)
+  source progress     +0 fid, +59 capture allocations since previous report
+         SOURCE REPEAT while capture advances; sustained repeats indicate a freeze
+  V0 offers consumed    4080
+  V1 offers discarded      0
+  V2 last starvation   0x0080  last starvation: stripe 0 missed the porch (latched history)
+  V3 stripe releases    4080
+
+job budget: J.jobs=25641, jobs/s = 60
+
+VERDICT (rules in docs/DGC3 protocol doc, section 5):
+- fill and sample are both active most of the time; split by the waits below
+- fill time is dominated by actual CACHE WRITES (Q0 = 67% of P0): the cache write port is the floor
+- STALE SOURCE FRAME: the job is 475 frames (7.9 s) behind the capture; look at frame_manager acquire/release and slot states.
+- no new reader underflow since previous report; V2 is latched history
+- R3 = 6: requests do overlap; latency/bandwidth per burst is the exposure.
+==============================================================================
+S row  : status=1FFD  T=02FF  cap_frames=25659  cap_aborted=0
+I row  : cap_rows=917  pixclk=148.2 MHz  line_px=1920  frame_lines=1080
+W row  : wa_frames=25659  wa_aborts=0  in_rgb_sum[31:16]=C1F3  out_rgb_sum[31:16]=D705
+         both RGB sums move -> pixel activity on both sides; repeated images
+         also change rolling sums, so check source fid M0 for freshness
+J row  : jobs=25701  blocks=2961  flags=EE8D  slots=6A
+         job flags: cstate=2 fill_busy=1 samp_busy=1 next_valid=1 aux_bank_busy=1 busy=1 state=1
+G row  : no_pend_us=0  tick_skip=0  underflow=639  reader_flags=E9AE
+         reader: cur_stripe=46 cur_ok=1 frame_ok=1 waiting_first=0 frame_black=0 have_next=1 cur_bank=2 next_bank=3
+K row  : acq_req= 60  acq_got= 60  job_max_us=15799  stripe=62C0  sticky=82FD
+         acquire: 60 requests -> 60 descriptors (the acquire path works;
+         the loss is in pend/start handling, not in the manager)
+         gap_max = 7.54 ms  (frame_done -> next job_start; ~0.5 ms = healthy 60 Hz cadence, ~16.7 ms = a whole display frame lost)
+         K2 (DGC5): pix_sid=49  bank0_sid=48  reading0=0 reading1=0
+         sticky: ack-timeout=1 writer-watchdog=0 reader-rel-overflow=0 reader-vs-discard=0
+
+P/Q/R (per second, 1 LSB = 23.95 us proc / 32.77 us ddr):
+  P0 fill active       26899 LSB =   644.32 ms  ( 64.4 % of the second)
+  P1 wait beats         4598 LSB =   110.14 ms  (17.1 % of fill)
+  P2 wait row channel    920 LSB =    22.04 ms  (3.4 % of fill)
+  P3 wait planner        179 LSB =     4.29 ms  (0.7 % of fill)
+  Q0 fill writes       18129 LSB =   434.25 ms  (67.4 % of fill)
+  Q1 sample active     38718 LSB =   927.42 ms
+  Q2 writer stall       8163 LSB =   195.53 ms  (21.1 % of sample)
+  Q3 sampler stall       198 LSB =     4.74 ms  (0.5 % of sample)
+  R0 AR handshakes     32986 LSB =  4222208 AR/s
+  R1 wait ar_ready         3 LSB =     0.10 ms ddr
+  R2 return starve     12803 LSB =   419.53 ms ddr
+  R3 max in flight         6
+  M0 source fid[15:0]  25125
+  M1 capture frames    25660
+  M2 frame releases    25701
+  M3 alloc drops           0
+  source frame age       535   (M1-M0 modulo 65536)
+  source progress     +0 fid, +60 capture allocations since previous report
+         SOURCE REPEAT while capture advances; sustained repeats indicate a freeze
+  V0 offers consumed    4080
+  V1 offers discarded      0
+  V2 last starvation   0x0080  last starvation: stripe 0 missed the porch (latched history)
+  V3 stripe releases    4080
+
+job budget: J.jobs=25701, jobs/s = 60
+
+VERDICT (rules in docs/DGC3 protocol doc, section 5):
+- fill and sample are both active most of the time; split by the waits below
+- fill time is dominated by actual CACHE WRITES (Q0 = 67% of P0): the cache write port is the floor
+- STALE SOURCE FRAME: the job is 535 frames (8.9 s) behind the capture; look at frame_manager acquire/release and slot states.
+- no new reader underflow since previous report; V2 is latched history
+- R3 = 6: requests do overlap; latency/bandwidth per burst is the exposure.

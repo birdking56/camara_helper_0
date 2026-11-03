@@ -1,0 +1,45 @@
+==============================================================================
+S row  : status=1FFD  T=02FF  cap_frames=0  cap_aborted=42
+I row  : cap_rows=692  pixclk=148.2 MHz  line_px=1920  frame_lines=1080
+W row  : wa_frames=66  wa_aborts=0  in_rgb_sum[31:16]=0000  out_rgb_sum[31:16]=1234
+J row  : jobs=0  blocks=7680  flags=0010  slots=40F
+         job flags: cstate=0 fill_busy=0 samp_busy=0 next_valid=0 aux_bank_busy=0 busy=0 state=0
+G row  : no_pend_us=512  tick_skip=0  underflow=0  reader_flags=0402
+         reader: cur_stripe=2 cur_ok=0 frame_ok=0 waiting_first=0 frame_black=1 have_next=0 cur_bank=0 next_bank=0
+K row  : acq_req=  0  acq_got= 16  job_max_us=10  stripe=1084  sticky=0000
+         K2 (DGC5): pix_sid=8  bank0_sid=33  reading0=0 reading1=0
+         sticky: ack-timeout=0 writer-watchdog=0 reader-rel-overflow=0 reader-vs-discard=0
+
+P/Q/R (per second, 1 LSB = 23.95 us proc / 32.77 us ddr):
+  P0 fill active       35000 LSB =   838.36 ms  ( 83.8 % of the second)
+  P1 wait beats        30000 LSB =   718.60 ms  (85.7 % of fill)
+  P2 wait row channel      0 LSB =     0.00 ms  (0.0 % of fill)
+  P3 wait planner          0 LSB =     0.00 ms  (0.0 % of fill)
+  Q0 fill writes       11000 LSB =   263.49 ms  (31.4 % of fill)
+  Q1 sample active     12000 LSB =   287.44 ms
+  Q2 writer stall          0 LSB =     0.00 ms  (0.0 % of sample)
+  Q3 sampler stall         0 LSB =     0.00 ms  (0.0 % of sample)
+  R0 AR handshakes     16000 LSB =  2048000 AR/s
+  R1 wait ar_ready         0 LSB =     0.00 ms ddr
+  R2 return starve         0 LSB =     0.00 ms ddr
+  R3 max in flight         1
+  M0 source fid[15:0]    100
+  M1 capture frames      106
+  M2 frame releases        0
+  M3 alloc drops           0
+  source frame age         6   (M1-M0 modulo 65536)
+  V0 offers consumed      40
+  V1 offers discarded      0
+  V2 last starvation   0x003C  last starvation: stripe 60 (latched history)
+  V3 stripe releases      40
+
+job budget: J.jobs=0
+
+VERDICT (rules in docs/DGC3 protocol doc, section 5):
+- FILL sets the block time: fill active is 2.9x sample active; sample is not the limiter
+- fill mostly WAITS FOR BEATS (P1 = 86% of P0): look at R1/R2/R3
+- STALE SOURCE FRAME: the job is 6 frames (0.1 s) behind the capture; look at frame_manager acquire/release and slot states.
+- V2=0x003C is historical; compare G2 underflow between reports to detect new black frames
+- R3 = 1: never more than one native request in flight. This is why deepening the fetch queue (QD 4->8) changed nothing.
+
+SELF-TEST PASS

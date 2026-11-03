@@ -1,0 +1,35 @@
+quantizer reproduces all 20 default_integer / default_word_hex entries in �ӿڳ���_v1.json
+
+S1 pipeline model - integer data path (F24 internal, F16 output)
+  internal resolution  : 2^-24 = 5.960e-08 normalized = 1.249e-04 source px
+
+== mode 0 identity ==
+  legal pixels                     : 2,073,600
+  vs EXACT float64 (end to end, the acceptance metric)
+      legality disagreements       : 0
+      max |error|                  : 0.000000 px
+      mean |error|                 : 0.000000 px
+  vs QUANTIZED float64 (isolates the data-path arithmetic)
+      legality disagreements       : 0
+      max |error|                  : 0.000000 px
+  identity is exact (0.0 px), as required
+
+== mode 1 static k1/k2 ==
+  legal pixels                     : 2,073,600
+  vs EXACT float64 (end to end, the acceptance metric)
+      legality disagreements       : 0
+      max |error|                  : 0.011660 px
+      mean |error|                 : 0.007805 px
+  vs QUANTIZED float64 (isolates the data-path arithmetic)
+      legality disagreements       : 0
+      max |error|                  : 0.000316 px
+
+== spot values for RTL vectors ==
+  (u,v)=(   0,   0) -> sx=     7188525 sy=     3826692 sample_ok=1 r2_f24=4658028
+  (u,v)=( 960, 540) -> sx=    62914184 sy=    35389713 sample_ok=1 r2_f24=2591
+  (u,v)=(1919,1079) -> sx=   118953302 sy=    66673781 sample_ok=1 r2_f24=4557898
+  (u,v)=( 100, 200) -> sx=    11405930 sy=    14878389 sample_ok=1 r2_f24=3320641
+  (u,v)=(1800,1000) -> sx=   113258806 sy=    62792908 sample_ok=1 r2_f24=3448585
+
+================ RESULT ================
+  frozen 0.1 px budget : MET by the planned integer path

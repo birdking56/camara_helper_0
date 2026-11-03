@@ -1,0 +1,15 @@
+{
+  "board_default_mode": 0,
+  "constants_match_contract": true,
+  "legal_pixels": 2073600,
+  "max_coordinate_error_px": 0.011659991719398022,
+  "expected_pixels": 2073600,
+  "corner_top_left_source_px": [
+    109.68818664550781,
+    58.39068603515625
+  ],
+  "corner_bottom_right_source_px": [
+    1815.0833435058594,
+    1017.3611602783203
+  ]
+}

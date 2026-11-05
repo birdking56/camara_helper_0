@@ -65,6 +65,7 @@ module tb_map_pipeline;
     wire [95:0] out_coord;
 
     dgc_map_pipeline u_dut (
+        .flush(1'b0),
         .clk              (clk),
         .rst_n            (rst_n),
         .cfg_mode         (cfg_mode),

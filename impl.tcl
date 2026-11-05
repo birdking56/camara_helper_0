@@ -918,3 +918,26 @@ gen_bit_stream
 pnr -gplace_seed 3 
 report_timing 
 gen_bit_stream 
+set_arch -family Logos2 -device PG2L100H -speedgrade -6 -package FBG676
+compile -top_module dgc_top_sys
+synthesize -ads -selected_syn_tool_opt 2 
+dev_map 
+pnr -gplace_seed 3 
+report_timing 
+gen_bit_stream 
+pnr 
+report_timing 
+set_arch -family Logos2 -device PG2L100H -speedgrade -6 -package FBG676
+compile -top_module dgc_top_sys
+synthesize -ads -selected_syn_tool_opt 2 
+dev_map 
+pnr 
+report_timing 
+gen_bit_stream 
+set_arch -family Logos2 -device PG2L100H -speedgrade -6 -package FBG676
+compile -top_module dgc_top_sys
+synthesize -ads -selected_syn_tool_opt 2 
+dev_map 
+pnr 
+report_timing 
+gen_bit_stream 

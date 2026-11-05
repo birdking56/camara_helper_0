@@ -59,6 +59,10 @@ module tb_top_sys;
     );
 
     integer waited;
+    integer sum_probe_i;
+    reg [23:0] sum_probe_rgb = 0;
+    reg sum_probe_de = 0;
+    reg [31:0] sum_probe_expected;
 
     // 2026-11-03: the interval counters (G0/G1) are cleared on the same edge that
     // freezes the snapshot, so the word must be compared with the value *at* that
@@ -103,6 +107,27 @@ module tb_top_sys;
             $display("TEST_FAIL: a data-domain reset did not release");
         end
         else $display("TEST_INFO: vin/proc/vout resets released");
+
+        // The diagnostic accumulator taps registered HDMI pixels. Check DE
+        // gaps and changing RGB together, independently of its internal stages.
+        sum_probe_expected = u_dut.out_rgb_sum;
+        force u_dut.rgb_out = sum_probe_rgb;
+        force u_dut.de_out = sum_probe_de;
+        for (sum_probe_i = 0; sum_probe_i < 257; sum_probe_i = sum_probe_i + 1) begin
+            @(negedge u_dut.vout_clk);
+            sum_probe_rgb = {sum_probe_i[7:0], (sum_probe_i[7:0] ^ 8'ha5), ~sum_probe_i[7:0]};
+            sum_probe_de = ((sum_probe_i % 5) != 0);
+            if (sum_probe_de)
+                sum_probe_expected = sum_probe_expected + sum_probe_rgb[23:16]
+                                   + sum_probe_rgb[15:8] + sum_probe_rgb[7:0];
+        end
+        @(negedge u_dut.vout_clk); sum_probe_de = 0;
+        repeat (5) @(posedge u_dut.vout_clk); #0.2;
+        if (u_dut.out_rgb_sum !== sum_probe_expected)
+            `DGC_FAIL("registered output RGB diagnostic sum lost/misaligned a pixel")
+        else $display("TEST_INFO: diagnostic output sum exact across 257 pixels and DE gaps");
+        release u_dut.rgb_out;
+        release u_dut.de_out;
 
         // ------------------------------------------------ snapshot packing check
         // 2026-11-03: the proc snapshot bundle used to overflow by 7 bits - the K0

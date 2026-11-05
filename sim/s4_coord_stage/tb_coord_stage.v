@@ -21,6 +21,8 @@ module tb_coord_stage;
     integer dgc_errors = 0;
     reg clk = 0; always #(`DGC_T_PROC) clk = ~clk;
     reg rst_n = 0;
+    reg flush = 0;
+    reg checking = 1;
     `DGC_GRS_INST
 
     // ------------------------------------------------------------- config
@@ -44,14 +46,15 @@ module tb_coord_stage;
 
     // ------------------------------------------------------------- FIFO
     wire        cf_valid;
-    wire        cf_ready = 1'b1;      // the consumer drains at full rate here
+    wire        cf_ready;
     wire [95:0] cf_data;
 
     wire        fifo_full, fifo_empty;
     wire [12:0] fifo_wl, fifo_rl;
     wire        fifo_rd_valid;
     wire [95:0] fifo_rd_data;
-    wire        fifo_rd_ready = 1'b1;
+    wire        fifo_rd_ready;
+    reg         consumer_ready = 1'b1;
     wire        fifo_rd_fire;
 
     wire [12:0] fifo_free = 13'd2048 - fifo_wl;
@@ -60,7 +63,7 @@ module tb_coord_stage;
         .clk(clk), .rst_n(rst_n),
         .wr_valid(cf_valid), .wr_ready(cf_ready), .wr_data(cf_data),
         .rd_fire(fifo_rd_fire), .rd_ready(fifo_rd_ready),
-        .rd_valid(fifo_rd_valid), .rd_ready_o(1'b1), .rd_data(fifo_rd_data), .flush(1'b0),
+        .rd_valid(fifo_rd_valid), .rd_ready_o(consumer_ready), .rd_data(fifo_rd_data), .flush(flush),
         .full(fifo_full), .empty(fifo_empty),
         .wr_level(fifo_wl), .rd_level(fifo_rl)
     );
@@ -90,7 +93,7 @@ module tb_coord_stage;
     wire        busy;
 
     dgc_coord_stage u_dut (
-        .clk(clk), .rst_n(rst_n), .flush(1'b0), .job_id(32'h1234_5678),
+        .clk(clk), .rst_n(rst_n), .flush(flush), .job_id(32'h1234_5678),
         .cfg_mode(cfg_mode),
         .cfg_m00(cfg_m00), .cfg_m01(cfg_m01), .cfg_m02(cfg_m02),
         .cfg_m10(cfg_m10), .cfg_m11(cfg_m11), .cfg_m12(cfg_m12),
@@ -114,13 +117,13 @@ module tb_coord_stage;
     );
 
     // ------------------------------------------------------------- scoreboard
-    localparam integer QN = 4096;
+    localparam integer QN = 8192;
     reg [95:0] exp_q [0:QN-1];
     reg        chk_q [0:QN-1];
     integer q_wp = 0, q_rp = 0;
 
     always @(posedge clk) begin
-        if (rst_n && fifo_rd_valid) begin   // out_ready is tied high
+        if (rst_n && checking && !flush && fifo_rd_valid && consumer_ready) begin
             if (q_rp >= q_wp) begin
                 dgc_errors = dgc_errors + 1;
                 if (dgc_errors < 10)
@@ -161,6 +164,32 @@ module tb_coord_stage;
                 chk_q[q_wp] = 1'b1;
                 q_wp = q_wp + 1;
             end
+        end
+    endtask
+
+    task flush_and_recover(input [15:0] new_tag);
+        begin
+            checking = 0;
+            @(negedge clk); flush = 1;
+            repeat (2) @(posedge clk); #0.2;
+            if (desc_valid || cf_valid || rpt_valid || blk_ready || busy || (fifo_wl != 0))
+                `DGC_FAIL("flush left an old coordinate/descriptor/handshake active")
+            @(negedge clk);
+            flush = 0;
+            q_wp = 0; q_rp = 0;
+            checking = 1;
+            desc_ready = 1;
+            repeat (8) @(posedge clk);
+            if (desc_valid || cf_valid || rpt_valid || !blk_ready)
+                `DGC_FAIL("old block returned after flush")
+            expect_identity(11'd0, 11'd0, 7'd32, 7'd16, new_tag, 1'b0);
+            start_block(11'd0, 11'd0, 7'd32, 7'd16, 7'd0, new_tag);
+            wait_rpt;
+            if (d_tag !== new_tag) `DGC_FAIL("restart returned a stale tile tag")
+            check_desc(2'd0, 11'd0, 11'd0, 11'd0, 11'd0, 7'd33, 7'd17, 10'd512);
+            repeat (40) @(posedge clk);
+            if ((q_rp != 512) || (q_wp != 512))
+                `DGC_FAIL("restart did not produce exactly 512 fresh coordinates")
         end
     endtask
 
@@ -347,6 +376,57 @@ module tb_coord_stage;
             $display("TEST_FAIL: %0d records expected, %0d arrived", q_wp, q_rp);
         end
         else $display("TEST_INFO: C5 the stage accepted the start again after the queue drained");
+
+        // C7: one descriptor remains queued while the following block is only
+        // partly generated. Both must be cancelled, including FIFO/map records.
+        desc_ready = 0;
+        expect_identity(11'd320, 11'd48, 7'd32, 7'd16, 16'h0200, 1'b0);
+        start_block(11'd320, 11'd48, 7'd32, 7'd16, 7'd3, 16'h0200);
+        wait_rpt;
+        skip_expect(512);
+        start_block(11'd640, 11'd96, 7'd32, 7'd16, 7'd6, 16'h0201);
+        repeat (80) @(posedge clk);
+        flush_and_recover(16'h0210);
+        $display("TEST_INFO: C7 queued descriptor + partial generation flushed; next block exact");
+
+        // C8: generation is finished, but mapped records are still in flight.
+        skip_expect(512);
+        start_block(11'd640, 11'd96, 7'd32, 7'd16, 7'd6, 16'h0300);
+        wait (u_dut.state == 2'd2);
+        flush_and_recover(16'h0310);
+        $display("TEST_INFO: C8 in-flight map tail flushed; next block exact");
+
+        // C9: cancel on the edge that would enqueue a completed descriptor.
+        desc_ready = 0;
+        expect_identity(11'd640, 11'd96, 7'd32, 7'd16, 16'h0400, 1'b0);
+        start_block(11'd640, 11'd96, 7'd32, 7'd16, 7'd6, 16'h0400);
+        wait (u_dut.push_req);
+        flush_and_recover(16'h0410);
+        $display("TEST_INFO: C9 pending descriptor commit cancelled; next block exact");
+
+        // C10: exercise the reservation guarantee with the real FIFO almost
+        // full. Park the consumer, fill four blocks, then free just enough for
+        // one more block and stop consuming during that entire 512-record burst.
+        // The production mapper has no stall enable; every reserved output must
+        // still be accepted and all five blocks must drain exactly once.
+        consumer_ready = 0;
+        for (i = 0; i < 4; i = i + 1) begin
+            expect_identity(11'd32*i, 11'd128, 7'd32, 7'd16, 16'h0500+i, 1'b0);
+            start_block(11'd32*i, 11'd128, 7'd32, 7'd16, 7'd8, 16'h0500+i);
+            wait_rpt;
+        end
+        if (fifo_free >= 512 || blk_ready)
+            `DGC_FAIL("C10 accepted an unreserved block while the FIFO was full")
+        expect_identity(11'd128, 11'd128, 7'd32, 7'd16, 16'h0504, 1'b0);
+        consumer_ready = 1;
+        start_block(11'd128, 11'd128, 7'd32, 7'd16, 7'd8, 16'h0504);
+        consumer_ready = 0;
+        wait_rpt;
+        consumer_ready = 1;
+        repeat (4000) @(posedge clk);
+        if (q_rp != q_wp)
+            `DGC_FAIL("C10 reserved blocks were lost or duplicated under FIFO pressure")
+        $display("TEST_INFO: C10 five reserved blocks exact with consumer stopped and FIFO near capacity");
 
         $display("TEST_INFO: descriptors accept=%0d black=%0d split=%0d",
                  cnt_accept, cnt_black, cnt_split_done);

@@ -40,9 +40,9 @@ module dgc_core (
 
     // ---------------- job ----------------------------------------------------
     input  wire        job_start,
-    // 2026-11-02: the job watchdog in dgc_core_sys fired. The stripe writer must
-    // drop every bank ownership bit (reader-owned ones included), because the
-    // reader will never release them; the next job_start then starts clean.
+    // Cancel coordinate/pixel work and drop abandoned stripe ownership. A source
+    // fill already in flight keeps draining; src_idle marks when its DDR source
+    // slot may safely be returned. The next job_start resets cache ownership.
     input  wire        job_abort,
     input  wire [31:0] job_id,
     input  wire [31:0] frame_base,
@@ -203,6 +203,7 @@ module dgc_core (
 
     reg         black_mode;
     reg         cur_accept;
+    reg         job_cancelled;
 
     // ------------------------------------------------------ job-boundary flush
     // A new job must not consume anything produced for the previous one. The
@@ -211,16 +212,17 @@ module dgc_core (
     // 18 coordinate from the old frame) re-armed the just-cleared bank0 as
     // stripe 18 and blocked the new job's stripe-0 pixels forever
     // (board 2026-10-29: cur_sid0=18, pix_sid=0, px_ready stuck low).
-    // A two-cycle pulse clears all of them before the first new block starts.
+    // Clear the complete coordinate stage, FIFO and sample pipelines on the
+    // event edge and for two following cycles before new blocks may start.
     reg  [1:0] job_flush_sh;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) job_flush_sh <= 2'b00;
-        else        job_flush_sh <= {job_flush_sh[0], job_start};
+        else        job_flush_sh <= {job_flush_sh[0], job_start | job_abort};
     end
-    wire job_flush = |job_flush_sh;
+    wire job_flush = job_start | job_abort | (|job_flush_sh);
 
     dgc_tile_scheduler u_sched (
-        .clk (clk), .rst_n (rst_n),
+        .clk (clk), .rst_n (rst_n & ~job_abort),
         .frame_start (job_start),
         .blk_valid (blk_valid), .blk_ready (blk_ready),
         .blk_tag (blk_tag), .blk_stripe (blk_stripe),
@@ -259,7 +261,7 @@ module dgc_core (
     wire        d_math_error;
 
     dgc_coord_stage u_coord (
-        .clk (clk), .rst_n (rst_n), .job_id (job_id),
+        .clk (clk), .rst_n (rst_n), .flush (job_flush), .job_id (job_id),
         .cfg_mode (cfg_mode),
         .cfg_m00 (cfg_m00), .cfg_m01 (cfg_m01), .cfg_m02 (cfg_m02),
         .cfg_m10 (cfg_m10), .cfg_m11 (cfg_m11), .cfg_m12 (cfg_m12),
@@ -322,7 +324,7 @@ module dgc_core (
     reg         rel_done;
 
     dgc_cache_owner u_owner (
-        .clk (clk), .rst_n (rst_n),
+        .clk (clk), .rst_n (rst_n & ~job_start),
         .fill_begin (owner_fill_begin), .fill_tag (fill_tag),
         .fill_complete (owner_fill_complete), .fill_abort (owner_fill_abort),
         .sample_begin (sample_begin), .rel (sample_rel),
@@ -568,8 +570,9 @@ module dgc_core (
     // push the next descriptor into the context register while the current
     // block is still being filled or sampled. C_DRAIN does not accept, so the
     // descriptor being switched to can never be overwritten.
-    assign desc_ready = (cstate == C_IDLE) ? 1'b1 :
-                        ((cstate == C_FILL || cstate == C_SAMPLE) && !next_valid);
+    assign desc_ready = !job_cancelled && !job_flush &&
+                        ((cstate == C_IDLE) ||
+                         ((cstate == C_FILL || cstate == C_SAMPLE) && !next_valid));
 
     // ACCEPT: the sampler takes the coordinate (its output FIFO absorbs any
     // bilinear stall). BLACK: bilinear takes it. SPLIT: it is only discarded.
@@ -602,30 +605,40 @@ module dgc_core (
             next_set <= 2'd0; next_tag <= 16'd0;
             next_bx <= 11'd0; next_by <= 11'd0; next_bw <= 7'd0; next_bh <= 7'd0;
             next_recs <= 10'd0; next_kind <= 2'd0;
+            job_cancelled <= 1'b0;
+        end
+        else if (job_start || job_abort || job_cancelled) begin
+            // This branch must be exclusive with descriptor/sample/FSM updates:
+            // old C_SAMPLE/C_DRAIN activity used to overwrite the restart values.
+            // Leave the fill engine running on abort so every outstanding DDR
+            // row is consumed before src_idle permits releasing the source slot.
+            job_started <= job_start;
+            job_cancelled <= !job_start;
+            cstate <= C_IDLE;
+            fill_start <= 1'b0;
+            sample_begin <= 1'b0;
+            sample_rel <= 1'b0;
+            cur_accept <= 1'b0;
+            black_mode <= 1'b0;
+            blocks_done <= 32'd0;
+            pix_seen <= 32'd0;
+            recs_total <= 10'd0;
+            inflight_px <= 10'd0;
+            retire_left <= 10'd0;
+            hs_pending <= 1'b0;
+            hs_left <= 4'd0;
+            hs_age <= 5'd0;
+            issue_left <= 10'd0;
+            sample_left <= 10'd0;
+            next_valid <= 1'b0;
+            next_filling <= 1'b0;
+            next_fill_done <= 1'b0;
+            rel_done <= 1'b0;
         end
         else begin
             fill_start   <= 1'b0;
             sample_begin <= 1'b0;
             sample_rel   <= 1'b0;
-
-            if (job_start) begin
-                job_started <= 1'b1;
-                cstate <= C_IDLE;
-                blocks_done <= 32'd0;
-                pix_seen <= 32'd0;
-                inflight_px <= 10'd0;
-                retire_left <= 10'd0;
-                hs_pending <= 1'b0;
-                hs_left    <= 4'd0;
-                hs_age     <= 5'd0;
-                issue_left <= 10'd0;
-                sample_left <= 10'd0;
-                next_valid <= 1'b0;
-                next_filling <= 1'b0;
-                next_fill_done <= 1'b0;
-                if (cur_accept) sample_rel <= 1'b1;
-                rel_done     <= 1'b0;
-            end
 
             // Pixels in flight through gamma/bilinear: one enters per record that
             // produces a pixel, one leaves per writer accept. The guard on the
@@ -905,10 +918,15 @@ module dgc_core (
     //     way to the DDR domain, so `frame_base` is not referenced any more. Writes
     //     into the source cache that are already in flight are harmless: nobody
     //     reads that data once the last record has been taken.
+    // On cancellation the coordinate scheduler stops and no new fill may start;
+    // the existing fill still consumes every requested beat. Its idle state then
+    // makes src_idle true without requiring the cancelled scheduler to finish.
     // A job that never dispatches a block (black/split-only frame) leaves
     // sched_frame_done low, so nothing is released early by accident.
-    assign src_idle = job_started && sched_frame_done && !desc_valid && !next_valid &&
-                      (sample_left == 10'd0) && !fill_busy && !row_valid;
+    assign src_idle = !fill_start && !fill_busy && !row_valid &&
+                      (job_cancelled ||
+                       (job_started && sched_frame_done && !desc_valid && !next_valid &&
+                        (sample_left == 10'd0)));
     assign cnt_blocks_done = blocks_done;
 
     assign dbg_cstate    = cstate;

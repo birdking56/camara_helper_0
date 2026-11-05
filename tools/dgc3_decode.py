@@ -188,7 +188,7 @@ def describe(s, prev=None):
             print("         manager refuses (or has no READY frame); look at the slot states (J3)")
         elif ag >= 40:
             print("         acquire: %d requests -> %d descriptors (the acquire path works;" % (ar, ag))
-            print("         the loss is in pend/start handling, not in the manager)")
+            print("         compare job runtime and display deadlines before attributing reduced rate to scheduling)")
     k2 = s.w("K", 2)
     print("         K2 (DGC5): pix_sid=%d  bank0_sid=%d  reading0=%d reading1=%d" %
           ((k2 >> 9) & 0x7F, (k2 >> 2) & 0x7F, k2 & 1, (k2 >> 1) & 1))

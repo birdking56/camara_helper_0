@@ -42,10 +42,15 @@
 //-----------------------------------------------------------------------------
 
 module dgc_map_pipeline #(
-    parameter integer META_W = 41
+    parameter integer META_W = 41,
+    // A coordinate block reserves all of its FIFO entries before it starts,
+    // so that integration can remove the global, high-fanout stall enable.
+    // Standalone stream users retain the ordinary valid/ready contract.
+    parameter integer ALLOW_STALL = 1
 ) (
     input  wire        clk,
     input  wire        rst_n,
+    input  wire        flush,           // cancel valid records, keep data registers running
 
     // ---------------- active configuration (constant for a whole job) --------
     input  wire [1:0]  cfg_mode,
@@ -94,7 +99,7 @@ module dgc_map_pipeline #(
         in_dst_x, in_dst_y, in_tile_tag, in_tile_last, 1'b0, (cfg_mode == 2'd0)
     };
 
-    wire stall = out_valid & (~out_ready);
+    wire stall = (ALLOW_STALL != 0) && out_valid && !out_ready;
 
     // ================================================================= stage 1
     reg  signed [47:0] a1, b1;
@@ -118,7 +123,7 @@ module dgc_map_pipeline #(
             a1 <= 48'sd0; b1 <= 48'sd0; meta1 <= {META_W{1'b0}}; v1 <= 1'b0;
         end
         else if (!stall) begin
-            v1    <= in_valid;
+            v1    <= in_valid & ~flush;
             meta1 <= meta_in;
             a1    <= (cfg_mode == 2'd0) ? 48'sd0 : a_next;
             b1    <= (cfg_mode == 2'd0) ? 48'sd0 : b_next;
@@ -156,7 +161,7 @@ module dgc_map_pipeline #(
             meta2 <= {META_W{1'b0}}; v2 <= 1'b0;
         end
         else if (!stall) begin
-            v2 <= v1;
+            v2 <= v1 & ~flush;
             if (v1) begin
                 x2     <= x_ovf ? 32'sd0 : x_wide[31:0];
                 y2     <= y_ovf ? 32'sd0 : y_wide[31:0];
@@ -205,8 +210,8 @@ module dgc_map_pipeline #(
         end
         else if (!stall) begin
             x2_d1 <= x2; y2_d1 <= y2;
-            v3d    <= v2; meta3d <= meta2;
-            v3     <= v3d;
+            v3d    <= v2 & ~flush; meta3d <= meta2;
+            v3     <= v3d & ~flush;
             meta3  <= meta3d;
             // The pipe's stage-1 register and this delay are the only two
             // registers between x2 and the stage-3 output; one metadata delay
@@ -220,25 +225,29 @@ module dgc_map_pipeline #(
 
     // ================================================================= stage 4
     reg  signed [31:0] x4, y4, r2_4;
+    reg  [8:0] r2_guard4;
     reg  [META_W-1:0]  meta4;
     reg                v4;
 
     wire signed [39:0] r2_sum = xsq3 + ysq3;
-    wire               r2_ovf = (r2_sum[39:32] != {8{r2_sum[31]}});
+    wire               r2_ovf = (r2_guard4[8:1] != {8{r2_guard4[0]}});
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             x4 <= 32'sd0; y4 <= 32'sd0; r2_4 <= 32'sd0;
+            r2_guard4 <= 9'd0;
             meta4 <= {META_W{1'b0}}; v4 <= 1'b0;
         end
         else if (!stall) begin
-            v4    <= v3;
+            v4    <= v3 & ~flush;
             x4    <= x3;
             y4    <= y3;
-            r2_4  <= r2_ovf ? 32'sd0 : r2_sum[31:0];
-            meta4 <= {meta3[META_W-1:2],
-                      (meta3[M_MERR] | r2_ovf),
-                      meta3[M_MODE0]};
+            // Register the sum before checking its guard bits. An overflowing
+            // value already makes the final record invalid, so zeroing r2 here
+            // only adds a 40-bit carry/reduction/mux chain before the r4 DSP.
+            r2_4  <= r2_sum[31:0];
+            r2_guard4 <= r2_sum[39:31];
+            meta4 <= meta3;
         end
     end
 
@@ -268,8 +277,10 @@ module dgc_map_pipeline #(
         end
         else if (!stall) begin
             x4_d1 <= x4; y4_d1 <= y4; r2_4_d1 <= r2_4;
-            v5d   <= v4; meta5d <= meta4;
-            v5    <= v5d;
+            v5d   <= v4 & ~flush;
+            meta5d <= {meta4[META_W-1:2],
+                       (meta4[M_MERR] | r2_ovf), meta4[M_MODE0]};
+            v5    <= v5d & ~flush;
             meta5 <= meta5d;
             x5    <= x4_d1;
             y5    <= y4_d1;
@@ -316,8 +327,8 @@ module dgc_map_pipeline #(
         end
         else if (!stall) begin
             x5_d1 <= x5; y5_d1 <= y5;
-            v6d   <= v5; meta6d <= meta5;
-            v6    <= v6d;
+            v6d   <= v5 & ~flush; meta6d <= meta5;
+            v6    <= v6d & ~flush;
             meta6 <= {meta6d[META_W-1:2],
                       (meta6d[M_MERR] | t2_ovf),
                       meta6d[M_MODE0]};
@@ -346,7 +357,7 @@ module dgc_map_pipeline #(
             meta7 <= {META_W{1'b0}}; v7 <= 1'b0;
         end
         else if (!stall) begin
-            v7      <= v6;
+            v7      <= v6 & ~flush;
             meta7   <= {meta6[META_W-1:2],
                         (meta6[M_MERR] | radial_ovf),
                         meta6[M_MODE0]};
@@ -388,8 +399,8 @@ module dgc_map_pipeline #(
             v8 <= 1'b0; v8d <= 1'b0;
         end
         else if (!stall) begin
-            v8d   <= v7; meta8d <= meta7;
-            v8    <= v8d;
+            v8d   <= v7 & ~flush; meta8d <= meta7;
+            v8    <= v8d & ~flush;
             meta8 <= meta8d;
             xd8   <= ux_p >>> F24;
             yd8   <= uy_p >>> F24;
@@ -434,14 +445,14 @@ module dgc_map_pipeline #(
             fx_r <= 72'sd0; fy_r <= 72'sd0;
         end
         else if (!stall) begin
-            v9a <= v8;
+            v9a <= v8 & ~flush;
             meta9a <= {meta8[META_W-1:2],
                        (meta8[M_MERR] | ux_ovf | uy_ovf), meta8[M_MODE0]};
-            v9b <= v9a;     meta9b <= meta9a;
+            v9b <= v9a & ~flush;     meta9b <= meta9a;
             // rec9 samples fx_r/meta9b on the next edge, so its valid is
             // one cycle after v9b; exporting v9b would present the previous
             // rec9 with the new record's timing.
-            v9c <= v9b;
+            v9c <= v9b & ~flush;
             // Stage-2 of the projection multiply, moved here from inside
             // dgc_mul_pipe so it is placed with its consumer (see stage 9 note).
             fx_r <= fx_sum;
@@ -555,11 +566,13 @@ module dgc_map_pipeline #(
     reg v9d;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) v9d <= 1'b0;
-        else if (!stall) v9d <= v9c;
+        else if (!stall) v9d <= v9c & ~flush;
     end
 
     assign out_coord = rec9;
-    assign out_valid = v9d;
+    // Suppress a stale handshake immediately. This also releases stall during
+    // flush, so every valid register is cleared even if out_ready is low.
+    assign out_valid = v9d & ~flush;
     assign in_ready  = ~stall;
 
 endmodule

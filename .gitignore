@@ -49,7 +49,9 @@ desktop.ini
 .vscode/
 .idea/
 
-# ================= 开发过程日志（不入库） =================
-docs/交接_*.md
-docs/interface_v1/开发日志.md
-docs/archive/
+# ================= 文档与开发过程日志（一律不入库） =================
+/docs/
+*.before.md
+handoff*.md
+*交接*.md
+*开发日志*.md

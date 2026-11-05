@@ -1,0 +1,143 @@
+DGC3 decode: tools\uart_black_20261104.log
+decoded 30 complete snapshot(s) from 330 report lines
+==============================================================================
+S row  : status=1FFD  T=02FF  cap_frames=18121  cap_aborted=0
+I row  : cap_rows=779  pixclk=148.2 MHz  line_px=1920  frame_lines=1080
+W row  : wa_frames=18121  wa_aborts=0  in_rgb_sum[31:16]=94A3  out_rgb_sum[31:16]=750B
+         input sum moves, output sum unchanged -> possible black/static output
+         or rolling-sum aliasing; inspect G2 underflow, M0 and reader flags
+J row  : jobs=9151  blocks=3840  flags=4C84  slots=A7
+         job flags: cstate=2 fill_busy=0 samp_busy=1 next_valid=1 aux_bank_busy=0 busy=1 state=0
+G row  : no_pend_us=0  tick_skip=0  underflow=18780  reader_flags=A400
+         scheduling: tick_skip=0/s  underflow=+60/s  (MISMATCH -> black frames have another cause)
+         reader: cur_stripe=0 cur_ok=0 frame_ok=0 waiting_first=0 frame_black=1 have_next=0 cur_bank=2 next_bank=2
+K row  : acq_req= 30  acq_got= 30  job_max_us=0  stripe=80F0  sticky=82FD
+         K2 (DGC5): pix_sid=64  bank0_sid=60  reading0=0 reading1=0
+         sticky: ack-timeout=1 writer-watchdog=0 reader-rel-overflow=0 reader-vs-discard=0
+
+P/Q/R (per second, 1 LSB = 23.95 us proc / 32.77 us ddr):
+  P0 fill active       17430 LSB =   417.50 ms  ( 41.8 % of the second)
+  P1 wait beats          339 LSB =     8.12 ms  (1.9 % of fill)
+  P2 wait row channel    464 LSB =    11.11 ms  (2.7 % of fill)
+  P3 wait planner         84 LSB =     2.01 ms  (0.5 % of fill)
+  Q0 fill writes       15064 LSB =   360.83 ms  (86.4 % of fill)
+  Q1 sample active     23726 LSB =   568.31 ms
+  Q2 writer stall       9242 LSB =   221.38 ms  (39.0 % of sample)
+  Q3 sampler stall       253 LSB =     6.06 ms  (1.1 % of sample)
+  R0 AR handshakes     15506 LSB =  1984768 AR/s
+  R1 wait ar_ready        55 LSB =     1.80 ms ddr
+  R2 return starve      7999 LSB =   262.11 ms ddr
+  R3 max in flight         8
+  M0 source fid[15:0]  18119
+  M1 capture frames    18122
+  M2 frame releases     9151
+  M3 alloc drops           0
+  source frame age         3   (M1-M0 modulo 65536)
+  source progress     +60 fid, +60 capture allocations since previous report
+  V0 offers consumed    1890
+  V1 offers discarded   1860
+  V2 last starvation   0x0080  last starvation: stripe 0 missed the porch (latched history)
+  V3 stripe releases    1890
+
+job budget: J.jobs=9151, jobs/s = 30
+
+VERDICT (rules in docs/DGC3 protocol doc, section 5):
+- fill and sample are both active most of the time; split by the waits below
+- fill time is dominated by actual CACHE WRITES (Q0 = 86% of P0): the cache write port is the floor
+- 60 new reader underflow(s); V2=0x0080: last starvation: stripe 0 missed the porch (latched history)
+- V1 = 1860 of 1890 offers discarded: the reader was black for part of the interval (late stripe 0 / underflow), not for all of it.
+- R3 = 8: requests do overlap; latency/bandwidth per burst is the exposure.
+==============================================================================
+S row  : status=1FFD  T=02FF  cap_frames=18181  cap_aborted=0
+I row  : cap_rows=667  pixclk=148.2 MHz  line_px=1920  frame_lines=1080
+W row  : wa_frames=18181  wa_aborts=0  in_rgb_sum[31:16]=3EFE  out_rgb_sum[31:16]=750B
+         input sum moves, output sum unchanged -> possible black/static output
+         or rolling-sum aliasing; inspect G2 underflow, M0 and reader flags
+J row  : jobs=9181  blocks=3840  flags=4C84  slots=A7
+         job flags: cstate=2 fill_busy=0 samp_busy=1 next_valid=1 aux_bank_busy=0 busy=1 state=0
+G row  : no_pend_us=0  tick_skip=0  underflow=18840  reader_flags=A400
+         scheduling: tick_skip=0/s  underflow=+60/s  (MISMATCH -> black frames have another cause)
+         reader: cur_stripe=0 cur_ok=0 frame_ok=0 waiting_first=0 frame_black=1 have_next=0 cur_bank=2 next_bank=2
+K row  : acq_req= 30  acq_got= 30  job_max_us=0  stripe=80F0  sticky=82FD
+         K2 (DGC5): pix_sid=64  bank0_sid=60  reading0=0 reading1=0
+         sticky: ack-timeout=1 writer-watchdog=0 reader-rel-overflow=0 reader-vs-discard=0
+
+P/Q/R (per second, 1 LSB = 23.95 us proc / 32.77 us ddr):
+  P0 fill active       17429 LSB =   417.48 ms  ( 41.7 % of the second)
+  P1 wait beats          337 LSB =     8.07 ms  (1.9 % of fill)
+  P2 wait row channel    464 LSB =    11.11 ms  (2.7 % of fill)
+  P3 wait planner         84 LSB =     2.01 ms  (0.5 % of fill)
+  Q0 fill writes       15064 LSB =   360.83 ms  (86.4 % of fill)
+  Q1 sample active     23727 LSB =   568.34 ms
+  Q2 writer stall       9243 LSB =   221.40 ms  (39.0 % of sample)
+  Q3 sampler stall       253 LSB =     6.06 ms  (1.1 % of sample)
+  R0 AR handshakes     15506 LSB =  1984768 AR/s
+  R1 wait ar_ready        54 LSB =     1.77 ms ddr
+  R2 return starve      7993 LSB =   261.91 ms ddr
+  R3 max in flight         8
+  M0 source fid[15:0]  18179
+  M1 capture frames    18182
+  M2 frame releases     9181
+  M3 alloc drops           0
+  source frame age         3   (M1-M0 modulo 65536)
+  source progress     +60 fid, +60 capture allocations since previous report
+  V0 offers consumed    1890
+  V1 offers discarded   1860
+  V2 last starvation   0x0080  last starvation: stripe 0 missed the porch (latched history)
+  V3 stripe releases    1890
+
+job budget: J.jobs=9181, jobs/s = 30
+
+VERDICT (rules in docs/DGC3 protocol doc, section 5):
+- fill and sample are both active most of the time; split by the waits below
+- fill time is dominated by actual CACHE WRITES (Q0 = 86% of P0): the cache write port is the floor
+- 60 new reader underflow(s); V2=0x0080: last starvation: stripe 0 missed the porch (latched history)
+- V1 = 1860 of 1890 offers discarded: the reader was black for part of the interval (late stripe 0 / underflow), not for all of it.
+- R3 = 8: requests do overlap; latency/bandwidth per burst is the exposure.
+==============================================================================
+S row  : status=1FFD  T=02FF  cap_frames=18241  cap_aborted=0
+I row  : cap_rows=555  pixclk=148.2 MHz  line_px=1920  frame_lines=1080
+W row  : wa_frames=18241  wa_aborts=0  in_rgb_sum[31:16]=08D6  out_rgb_sum[31:16]=750B
+         input sum moves, output sum unchanged -> possible black/static output
+         or rolling-sum aliasing; inspect G2 underflow, M0 and reader flags
+J row  : jobs=9211  blocks=3840  flags=4C84  slots=A7
+         job flags: cstate=2 fill_busy=0 samp_busy=1 next_valid=1 aux_bank_busy=0 busy=1 state=0
+G row  : no_pend_us=0  tick_skip=0  underflow=18900  reader_flags=A400
+         scheduling: tick_skip=0/s  underflow=+60/s  (MISMATCH -> black frames have another cause)
+         reader: cur_stripe=0 cur_ok=0 frame_ok=0 waiting_first=0 frame_black=1 have_next=0 cur_bank=2 next_bank=2
+K row  : acq_req= 30  acq_got= 30  job_max_us=0  stripe=80F0  sticky=82FD
+         K2 (DGC5): pix_sid=64  bank0_sid=60  reading0=0 reading1=0
+         sticky: ack-timeout=1 writer-watchdog=0 reader-rel-overflow=0 reader-vs-discard=0
+
+P/Q/R (per second, 1 LSB = 23.95 us proc / 32.77 us ddr):
+  P0 fill active       17431 LSB =   417.53 ms  ( 41.8 % of the second)
+  P1 wait beats          339 LSB =     8.12 ms  (1.9 % of fill)
+  P2 wait row channel    464 LSB =    11.11 ms  (2.7 % of fill)
+  P3 wait planner         84 LSB =     2.01 ms  (0.5 % of fill)
+  Q0 fill writes       15064 LSB =   360.83 ms  (86.4 % of fill)
+  Q1 sample active     23725 LSB =   568.29 ms
+  Q2 writer stall       9241 LSB =   221.35 ms  (39.0 % of sample)
+  Q3 sampler stall       253 LSB =     6.06 ms  (1.1 % of sample)
+  R0 AR handshakes     15506 LSB =  1984768 AR/s
+  R1 wait ar_ready        53 LSB =     1.74 ms ddr
+  R2 return starve      7999 LSB =   262.11 ms ddr
+  R3 max in flight         8
+  M0 source fid[15:0]  18239
+  M1 capture frames    18242
+  M2 frame releases     9211
+  M3 alloc drops           0
+  source frame age         3   (M1-M0 modulo 65536)
+  source progress     +60 fid, +60 capture allocations since previous report
+  V0 offers consumed    1890
+  V1 offers discarded   1860
+  V2 last starvation   0x0080  last starvation: stripe 0 missed the porch (latched history)
+  V3 stripe releases    1890
+
+job budget: J.jobs=9211, jobs/s = 30
+
+VERDICT (rules in docs/DGC3 protocol doc, section 5):
+- fill and sample are both active most of the time; split by the waits below
+- fill time is dominated by actual CACHE WRITES (Q0 = 86% of P0): the cache write port is the floor
+- 60 new reader underflow(s); V2=0x0080: last starvation: stripe 0 missed the porch (latched history)
+- V1 = 1860 of 1890 offers discarded: the reader was black for part of the interval (late stripe 0 / underflow), not for all of it.
+- R3 = 8: requests do overlap; latency/bandwidth per burst is the exposure.

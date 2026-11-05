@@ -833,17 +833,16 @@ module dgc_core_sys #(
     // stuck at 3, blocks stuck at 180, Q1=Q2=100% of the second, reader flags
     // 0x0400, bank0_busy=1, output RGB sum 0.
     //
-    // A job-level watchdog bounds the damage to one dropped frame: if no
-    // core_frame_done arrives for ~1.5 frame periods, release the source frame
-    // and let the next job start. The core and the stripe writer both reset on
-    // job_start, so the wedged bank is cleared at the next job boundary. This is
-    // a mitigation, not the ownership fix: the writer should also accept a
-    // release for a bank it still considers WRITING.
+    // If no completion arrives for ~1.5 frame periods, cancel the job. The core
+    // clears coordinate/pixel work and stripe ownership, then drains any current
+    // DDR fill before src_idle permits releasing the source slot and restarting.
     localparam [23:0] JOB_WD_TO = JOB_WD_LIMIT[23:0];   // default ~24.5 ms at 171 MHz
     reg [23:0] job_wd;
-    wire       job_wd_expired = (job_state == 2'd1) && (job_wd >= JOB_WD_TO);
+    reg        abort_wait;
+    wire       job_wd_expired = (job_state == 2'd1) && !abort_wait &&
+                                !core_frame_done && (job_wd >= JOB_WD_TO);
     // 2026-11-02: the watchdog is also the job-level abort event. The core passes
-    // this one-cycle pulse to the stripe writer, which then returns every bank
+    // this one-cycle pulse to its flush logic and the stripe writer, returning every bank
     // (reader-owned ones included) to FREE. Without it the reader, which went black
     // and cleared its own ownership, never sends the release and the writer keeps
     // the bank READING forever - the next job then stalls on that bank and the
@@ -851,7 +850,12 @@ module dgc_core_sys #(
     reg        job_abort_p;
     always @(posedge proc_clk or negedge proc_rst_n) begin
         if (!proc_rst_n) job_abort_p <= 1'b0;
-        else             job_abort_p <= job_wd_expired && !job_abort_p;
+        else             job_abort_p <= job_wd_expired;
+    end
+    always @(posedge proc_clk or negedge proc_rst_n) begin
+        if (!proc_rst_n) abort_wait <= 1'b0;
+        else if (job_state != 2'd1) abort_wait <= 1'b0;
+        else if (job_wd_expired) abort_wait <= 1'b1;
     end
 
     always @(posedge proc_clk or negedge proc_rst_n) begin
@@ -974,8 +978,11 @@ module dgc_core_sys #(
                     // The completion flags below keep their old meaning: the job is
                     // only finished in state 1 when the core reports frame_done (or the
                     // watchdog fires), which is what allows the next job to start.
-                    if (!src_rel_sent &&
-                        (core_src_idle || core_frame_done || job_wd_expired)) begin
+                    // A watchdog cancels coordinate/pixel work, but a DDR fill
+                    // already in flight must drain before capture may reuse its
+                    // source slot. core_src_idle also covers that abort drain.
+                    if (!src_rel_sent && !job_start_p &&
+                        (core_src_idle || core_frame_done)) begin
                         rel_src_data  <= {30'd0, job_slot, job_id_r};
                         rel_src_valid <= 1'b1;
                         src_rel_sent  <= 1'b1;
@@ -984,7 +991,7 @@ module dgc_core_sys #(
                     // Until that edge its level-style frame_done still belongs
                     // to the previous job. Never release the new source slot
                     // using that stale completion.
-                    if ((core_frame_done && !job_start_p) || job_wd_expired) begin
+                    if ((core_frame_done && !job_start_p) || (abort_wait && core_src_idle)) begin
                         job_state <= 2'd2;
                     end
                 end

@@ -29,6 +29,7 @@ module tb_map_single;
     localparam [31:0] NORM_Q = 32'd134217728;
 
     dgc_map_pipeline u_dut (
+        .flush(1'b0),
         .clk (clk), .rst_n (rst_n),
         .cfg_mode (2'd1),
         .cfg_m00 (M00_Q), .cfg_m01 (M01_Q), .cfg_m02 (M02_Q),

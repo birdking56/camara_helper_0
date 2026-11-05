@@ -1,0 +1,85 @@
+{
+  "snapshots": 30,
+  "capture_delta_per_report": {
+    "60": 27,
+    "59": 2
+  },
+  "jobs_delta_per_report": {
+    "40": 28,
+    "41": 1
+  },
+  "underflow_delta_per_report": {
+    "60": 29
+  },
+  "source_fid_delta_per_report": {
+    "59": 4,
+    "61": 1,
+    "60": 24
+  },
+  "source_age_frames": {
+    "min": 1,
+    "max": 3
+  },
+  "capture_aborts": {
+    "min": 0,
+    "max": 0
+  },
+  "write_aborts": {
+    "min": 0,
+    "max": 0
+  },
+  "alloc_drops": {
+    "min": 0,
+    "max": 0
+  },
+  "tick_skip": {
+    "min": 0,
+    "max": 0
+  },
+  "job_max_raw_us_counter": {
+    "min": 16740,
+    "max": 16748
+  },
+  "job_max_us_scaled_to_report_clock": {
+    "min": 16722.95868,
+    "max": 16730.950535999997
+  },
+  "display_frame_us_from_report_clock": 16649.325,
+  "latched_last_starvation_stripe": {
+    "min": 0,
+    "max": 27
+  },
+  "latched_first_line_miss_snapshots": 4,
+  "latched_midframe_starvation_stripe": {
+    "min": 18,
+    "max": 27
+  },
+  "offers_per_report": {
+    "min": 2683,
+    "max": 2766
+  },
+  "discards_per_report": {
+    "min": 1722,
+    "max": 1794
+  },
+  "releases_per_report": {
+    "min": 2682,
+    "max": 2766
+  },
+  "writer_stall_counter": {
+    "min": 0,
+    "max": 704
+  },
+  "fill_active_ms_per_report": {
+    "min": 640.072327168,
+    "max": 659.885400064
+  },
+  "fill_wait_beat_ms_per_report": {
+    "min": 76.667977728,
+    "max": 78.917287936
+  },
+  "reader_black_snapshots": 30,
+  "writer_watchdog_sticky_snapshots": 0,
+  "output_sum_distinct_values": 30
+}
+Log line: 3227

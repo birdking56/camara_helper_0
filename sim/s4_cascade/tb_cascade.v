@@ -50,6 +50,7 @@ module tb_cascade;
     wire [95:0] map_coord;
 
     dgc_map_pipeline u_map (
+        .flush(1'b0),
         .clk (clk), .rst_n (rst_n),
         .cfg_mode (cfg_mode),
         .cfg_m00 (M00_Q), .cfg_m01 (32'sd0), .cfg_m02 (M02_Q),

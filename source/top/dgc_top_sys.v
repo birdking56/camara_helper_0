@@ -736,10 +736,13 @@ wire [15:0] dbg_job_fid;
             out_rgb_bv <= 1'b0;
         end
         else begin
-            out_rgb_bv <= de_out;
-            if (de_out) out_rgb_b <= {2'b0, rgb_out[23:16]}
-                                   + {2'b0, rgb_out[15:8]}
-                                   + {2'b0, rgb_out[7:0]};
+            // Reuse the existing registered HDMI pixel tap. The reader's bank
+            // mux / DE gate must not also feed the byte adder in the same cycle.
+            // The diagnostic sum moves one clock later; the video path is intact.
+            out_rgb_bv <= de_o_r;
+            out_rgb_b <= {2'b0, rgb_o_r[23:16]}
+                       + {2'b0, rgb_o_r[15:8]}
+                       + {2'b0, rgb_o_r[7:0]};
         end
 
     reg [31:0] out_rgb_sum;

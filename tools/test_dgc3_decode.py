@@ -54,6 +54,13 @@ class TelemetryTests(unittest.TestCase):
         self.assertIn("zero is ambiguous", text)
         self.assertNotIn("gap_max", text)
 
+    def test_live_acquire_does_not_imply_a_start_handling_fault(self):
+        current = snapshot(fid=106, capture=108, underflow=640)
+        current.add("K", "2828416A5CB00000")
+        text = report(current, snapshot())
+        self.assertIn("compare job runtime and display deadlines", text)
+        self.assertNotIn("loss is in pend/start handling", text)
+
 
 if __name__ == "__main__":
     unittest.main()

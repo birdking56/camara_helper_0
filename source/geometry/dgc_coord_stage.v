@@ -35,10 +35,9 @@ module dgc_coord_stage #(
 ) (
     input  wire        clk,
     input  wire        rst_n,
-    // Job-boundary flush: clears only the map pipeline (in-flight coordinates
-    // from the previous job). The configuration snapshot and the block FSM are
-    // deliberately NOT reset: resetting the whole stage lost the config and
-    // froze it (s4_core blocks=0), so only the map's valid pipeline is cleared.
+    // Job-boundary flush: discard the partial block, pending descriptor and
+    // queued descriptors together with the map/bbox pipeline. Configuration
+    // inputs remain connected throughout; no configuration register is reset.
     input  wire        flush,
 
     input  wire [31:0] job_id,
@@ -148,11 +147,23 @@ module dgc_coord_stage #(
     wire desc_space = (desc_count != DESC_DEPTH);
     wire start_ok   = desc_space & (fifo_free >= {1'b0, blk_pixels});
 
-    assign blk_ready = (state == S_IDLE) & start_ok;
+    assign blk_ready = (state == S_IDLE) & start_ok & ~flush;
+
+    // Local reset release breaks the global reset -> long map RSCO cascade.
+    // A job flush only cancels valid bits, not all of the arithmetic registers.
+    reg map_rst_n;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) map_rst_n <= 1'b0;
+        else        map_rst_n <= 1'b1;
+    end
 
     // ------------------------------------------------------------- mapper
-    dgc_map_pipeline u_map (
-        .clk(clk), .rst_n(rst_n),
+    // The only writer to the FIFO reserves width*height entries at start_ok;
+    // no next block starts until this block's last record is accepted. The
+    // consumer can only free more space, so an active block cannot be stalled.
+    // Removing this unused stall path avoids PDS's 29-level CECO cascade.
+    dgc_map_pipeline #(.ALLOW_STALL(0)) u_map (
+        .clk(clk), .rst_n(map_rst_n), .flush(flush),
         .cfg_mode(cfg_mode),
         .cfg_m00(cfg_m00), .cfg_m01(cfg_m01), .cfg_m02(cfg_m02),
         .cfg_m10(cfg_m10), .cfg_m11(cfg_m11), .cfg_m12(cfg_m12),
@@ -168,7 +179,7 @@ module dgc_coord_stage #(
 
     // ------------------------------------------------------------- bbox
     dgc_bbox_acc u_bbox (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n & ~flush),
         .blk_start(bbox_rst),
         .in_valid(map_out_valid), .in_ready(map_out_ready),
         .in_coord(map_out_coord),
@@ -208,6 +219,13 @@ module dgc_coord_stage #(
             p_ox <= 11'd0; p_oy <= 11'd0; p_ow <= 6'd0; p_oh <= 5'd0;
             p_rc <= 10'd0; p_bx <= 11'd0; p_by <= 11'd0; p_bw <= 7'd0; p_bh <= 7'd0;
             p_kind <= 2'd0; p_merr <= 1'b0;
+        end
+        else if (flush) begin
+            state <= S_IDLE;
+            bbox_rst <= 1'b0;
+            rpt_valid <= 1'b0;
+            split_valid <= 1'b0;
+            push_req <= 1'b0;
         end
         else begin
             rpt_valid <= 1'b0;
@@ -281,6 +299,9 @@ module dgc_coord_stage #(
         if (!rst_n) begin
             q_wp <= {AW{1'b0}}; q_rp <= {AW{1'b0}}; desc_count <= 4'd0;
         end
+        else if (flush) begin
+            q_wp <= {AW{1'b0}}; q_rp <= {AW{1'b0}}; desc_count <= 4'd0;
+        end
         else begin
             if (push_req) begin
                 q_job [q_wp] <= p_job;
@@ -309,7 +330,7 @@ module dgc_coord_stage #(
         end
     end
 
-    assign desc_valid  = (desc_count != 0);
+    assign desc_valid  = (desc_count != 0) & ~flush;
     assign d_job_id    = q_job [q_rp];
     assign d_tag       = q_tag [q_rp];
     assign d_stripe    = q_strp[q_rp];
@@ -326,6 +347,13 @@ module dgc_coord_stage #(
     assign d_math_error= q_merr[q_rp];
 
     assign busy = (state != S_IDLE);
+
+`ifdef DGC_SIM
+    always @(posedge clk) begin
+        if (rst_n && !flush && map_out_valid && !map_out_ready)
+            $error("DGC_ERROR: reserved coordinate block encountered FIFO backpressure");
+    end
+`endif
 
 endmodule
 

@@ -1,5 +1,5 @@
 param([switch]$Long)
-# Run every simulation suite (S0 + S1) and print a single summary.
+# Run the default S0..S5 suites and print a single summary.
 #
 #   powershell -NoProfile -File sim\run_all.ps1
 #
@@ -25,6 +25,7 @@ $suites = @(
     @{ name = "s1_map_pipeline"; script = "sim\s1_map_pipeline\run.ps1"; what = "map_pipeline vs golden model, whole 1080p frame" },
     @{ name = "s1_map_edge";     script = "sim\s1_map_pipeline\run_edge.ps1"; what = "map_pipeline boundary and error flags" },
     @{ name = "s2_unpack";       script = "sim\s2_unpack\run.ps1";       what = "unpack: beats to pixels, carry, tail, backpressure" },
+    @{ name = "s2_unpack_matrix"; script = "sim\s2_unpack\run_matrix.ps1"; what = "unpack: all 32 head offsets x 64 widths, random backpressure/starvation" },
     @{ name = "s2_coord_fifo";   script = "sim\s2_coord_fifo\run.ps1";   what = "coord FIFO wrapper: order, backpressure, full, reset" },
     @{ name = "s2_config";       script = "sim\s2_config\run.ps1";       what = "config manager: register map, commit, epoch, error codes" },
     @{ name = "s3_bilinear";     script = "sim\s3_bilinear\run.ps1";     what = "bilinear: corners, centre, 2000 random, rounding, black fill" },
@@ -86,19 +87,15 @@ $suites = @(
 # streams one pixel per clock, so every fast suite is part of the default run.
 # s5_jobs runs two complete 1080p jobs (~33 ms of simulated time, ~15 minutes of
 # wall clock with the lazy DDR image model), so it is opt-in with -Long.
-# s5_jobs_align is the same run with ALIGN_TO_FRAME=1, the real output vs_fall as
-# the frame tick and a real 45-line vertical back porch; it is the only suite that
-# checks that an aligned job start makes the displayed frame pixel exact
-# (2026-11-02 b: 2 good frames, 61440 first-stripe pixels, 0 mismatches).
+# The long run also covers watchdog/fill-abort recovery and the production
+# MODE=1 raster with normal and extended DDR latency, checking full frames.
 if ($Long) {
     $suites += @{ name = "s5_jobs"; script = "sim\s5_jobs\run.ps1"; what = "SYSTEM multi-job: two consecutive jobs each complete 4080 blocks (slow)" }
     $suites += @{ name = "s5_jobs_align"; script = "sim\s5_jobs\run_align.ps1"; what = "SYSTEM multi-job, aligned start: two jobs, first stripes pixel exact (slow)" }
-    # s5_jobs_abort (sim\s5_jobs\run_abort.ps1) is deliberately NOT in this list yet:
-    # the writer-level abort contract is covered by s4_writer_watchdog D6/D7 and
-    # s4_stripe_owner O6, but the end-to-end scenario currently FAILS and reproduces
-    # a real, pre-existing gap: a mid-frame abort is not covered by the coordinate
-    # stage / tile scheduler reset, so the next job's block sequence is corrupted and
-    # stalls after ~220 blocks. See docs 交接 2026-11-02 21:40 and §6 item 1.
+    $suites += @{ name = "s5_jobs_abort"; script = "sim\s5_jobs\run_abort.ps1"; what = "MODE=1 watchdog recovery: stranded bank, next full radial frame pixel exact" }
+    $suites += @{ name = "s5_jobs_abort_fill"; script = "sim\s5_jobs\run_abort_fill.ps1"; what = "MODE=1 active DDR-fill abort: drain before release, next full radial frame exact" }
+    $suites += @{ name = "s5_jobs_board_radial"; script = "sim\s5_jobs\run_board_radial.ps1"; what = "171 MHz, actual 1080p60 raster: two full radial frames exact, zero steady underflow" }
+    $suites += @{ name = "s5_jobs_board_stress"; script = "sim\s5_jobs\run_board_stress.ps1"; what = "171 MHz radial display under longer DDR response latency, two full frames exact" }
 }
 $results = @()
 foreach ($s in $suites) {

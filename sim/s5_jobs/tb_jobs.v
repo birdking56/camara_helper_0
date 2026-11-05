@@ -24,6 +24,21 @@
 module tb_jobs;
     integer dgc_errors = 0;
 
+`ifdef DGC_BOARD_RADIAL_TEST
+`define DGC_RADIAL_JOB_TEST
+`elsif DGC_ABORT_TEST
+`define DGC_RADIAL_JOB_TEST
+`endif
+`ifdef DGC_RADIAL_JOB_TEST
+    reg [23:0] radial_expected [0:2073599];
+    reg [1023:0] expected_path;
+    initial begin
+        if (!$value$plusargs("EXPECT=%s", expected_path))
+            $fatal(1, "radial job suite requires +EXPECT");
+        $readmemh(expected_path, radial_expected);
+    end
+`endif
+
 `ifdef DGC_ALIGN_TEST
     localparam integer ALIGN_TO_FRAME = 1;
 `else
@@ -35,8 +50,13 @@ module tb_jobs;
     // 180 MHz, matching the board's pll_proc after the 2026-10-27 change. The
     // shared macro still says 225 MHz; the relative proc/vin/vout clocks change
     // the pipeline races under test, so this suite uses the real board clock.
+`ifdef DGC_BOARD_RADIAL_TEST
+    reg proc_clk = 0; always #2.921 proc_clk = ~proc_clk;
+    reg vout_clk = 0; always #3.3635 vout_clk = ~vout_clk;
+`else
     reg proc_clk = 0; always #2.7778 proc_clk = ~proc_clk;
     reg vout_clk = 0; always #(`DGC_T_VOUT) vout_clk = ~vout_clk;
+`endif
 
     reg rst_n = 0;
     `DGC_GRS_INST
@@ -81,8 +101,15 @@ module tb_jobs;
     // 45 lines of blanking = 45 x 2200 vout clocks = 800 us of processing time,
     // the same budget the real 1080p60 mode gives.
     integer hco = 0, vco = 0;
+`ifdef DGC_BOARD_RADIAL_TEST
+    localparam integer VOUT_TOTAL = 1125;
+    localparam integer V_BACK = 41;        // 5 sync + 36 back porch
+    localparam integer H_ACTIVE = 192;     // 44 sync + 148 back porch
+`else
     localparam integer VOUT_TOTAL = 1170;   // 45 blank + 1080 active + 45 front porch
     localparam integer V_BACK  = 45;
+    localparam integer H_ACTIVE = 0;
+`endif
     reg vout_en = 0;
     always @(posedge vout_clk) begin
         if (!rst_n) begin hco <= 0; vco <= 0; end
@@ -100,9 +127,14 @@ module tb_jobs;
     // as "first active line without stripe 0" and abandons the frame.
     wire        in_active_v = vout_en && (vco >= V_BACK) && (vco < V_BACK + 1080);
     wire [11:0] y_act       = (vco >= V_BACK) ? (vco[11:0] - V_BACK[11:0]) : 12'd0;
-    wire de_tg = in_active_v && (hco < 1920);
+    wire [11:0] x_act = hco[11:0] - H_ACTIVE[11:0];
+    wire de_tg = in_active_v && (hco >= H_ACTIVE) && (hco < H_ACTIVE + 1920);
     wire hs_tg = vout_en && (hco < 44);
+`ifdef DGC_BOARD_RADIAL_TEST
+    wire vs_tg = vout_en && (vco < 5);
+`else
     wire vs_tg = vout_en && (vco >= V_BACK + 1080) && (vco < V_BACK + 1085);
+`endif
 
     // ================================================================ DDR model
     // The DDR model returns the synthetic image for every address (the same
@@ -128,7 +160,13 @@ module tb_jobs;
     reg  [1:0]  sl_state = SL_IDLE;
     reg  [27:0] sl_addr;
     reg  [4:0]  sl_len, sl_idx;
-    reg  [3:0]  sl_delay;
+    reg  [7:0]  sl_delay;
+    integer read_delay = 4;
+    initial begin
+        if ($value$plusargs("RD_DELAY=%d", read_delay)) begin end
+        if (read_delay < 0 || read_delay > 255) $fatal(1, "invalid RD_DELAY");
+        $display("TEST_INFO: DDR model initial read delay=%0d cycles", read_delay);
+    end
     reg  [255:0] rdata = 0;
     reg          rvalid = 0, rlast = 0;
     reg  [3:0]   rid = 0;
@@ -191,12 +229,12 @@ module tb_jobs;
                     sl_addr  <= araddr;
                     sl_len   <= arlen;
                     sl_idx   <= 5'd0;
-                    sl_delay <= 4'd4;
+                    sl_delay <= read_delay[7:0];
                     sl_state <= SL_WAIT;
                 end
             end
             SL_WAIT: begin
-                if (sl_delay != 0) sl_delay <= sl_delay - 4'd1;
+                if (sl_delay != 0) sl_delay <= sl_delay - 8'd1;
                 else begin
                     rdata    <= imgw0;
                     rvalid   <= 1'b1;
@@ -372,16 +410,22 @@ module tb_jobs;
         .axi_araddr (araddr), .axi_arlen (arlen), .axi_arvalid (arvalid),
         .axi_arready (axi_arready),
         .axi_rdata (rdata), .axi_rvalid (rvalid), .axi_rlast (rlast), .axi_rid (rid),
+`ifdef DGC_RADIAL_JOB_TEST
+        .cfg_mode (2'd1),
+        .cfg_m00 (32'sd32014), .cfg_m01 (32'sd0), .cfg_m02 (-32'sd31278815),
+        .cfg_m10 (32'sd0), .cfg_m11 (32'sd31711), .cfg_m12 (-32'sd16492896),
+`else
         .cfg_mode (2'd0),
         .cfg_m00 (32'sd67108864), .cfg_m01 (32'sd0), .cfg_m02 (32'sd0),
         .cfg_m10 (32'sd0), .cfg_m11 (32'sd67108864), .cfg_m12 (32'sd0),
+`endif
         .cfg_fx (32'sd137377855), .cfg_fy (32'sd138692973),
         .cfg_cx (32'sd64030536), .cfg_cy (32'sd34085643),
         .cfg_k1 (-32'sd129279204), .cfg_k2 (32'sd74679738),
         .cfg_norm_abs_max (32'h08000000), .gamma_mode (2'd0),
         .frame_tick (frame_tick),
         .de_tg (de_tg), .hs_tg (hs_tg), .vs_tg (vs_tg),
-        .x_tg (hco[11:0]), .y_tg (y_act),   // active-line y: the reader addresses {y[3:0], x}
+        .x_tg (x_act), .y_tg (y_act),   // active-line y: the reader addresses {y[3:0], x}
         .rgb_out (rgb_out), .de_out (de_out), .hs_out (hs_out), .vs_out (vs_out),
         .stat_frames_written (st_wr), .stat_frames_processed (st_proc),
         .stat_stripes_underflow (st_uf), .stat_frames_dropped (st_drop),
@@ -399,7 +443,7 @@ module tb_jobs;
     reg [11:0] yd [0:1];
     integer k;
     always @(posedge vout_clk) begin
-        xd[0] <= hco[11:0]; yd[0] <= y_act;   // active-line y (back porch removed)
+        xd[0] <= x_act; yd[0] <= y_act;   // active-line y (back porch removed)
         xd[1] <= xd[0];     yd[1] <= yd[0];
     end
     wire [11:0] x_dl = xd[1];
@@ -643,6 +687,7 @@ module tb_jobs;
     // only count how many pixels were seen so a totally blank screen would show.
     integer px_mismatch = 0;
     always @(posedge vout_clk) begin
+`ifndef DGC_BOARD_RADIAL_TEST
         if (rst_n && de_out && check_frame && (y_dl < 16)) begin
             checked_px = checked_px + 1;
             if (rgb_out !== img(x_dl[10:0], y_dl[10:0])) begin
@@ -652,9 +697,104 @@ module tb_jobs;
                              x_dl, y_dl, img(x_dl[10:0], y_dl[10:0]), rgb_out);
             end
         end
+`endif
     end
 
+`ifdef DGC_BOARD_RADIAL_TEST
+    // This suite models the production clocks/raster and checks every displayed
+    // radial pixel. Startup black frames before the first job are allowed.
+    integer board_checked = 0, board_frames = 0, board_starts = 0;
+    integer board_aborts = 0, board_uf = 0;
+    reg [31:0] board_uf_d = 0;
+    time board_job_start;
+    real stripe_deadline_us, stripe_ready_us, stripe_margin_us;
+    real min_stripe_margin_us = 1.0e9;
+    integer late_stripes = 0;
+    always @(posedge proc_clk) if (rst_n) begin
+        if (u_sys.job_start_p) begin
+            board_starts = board_starts + 1;
+            board_job_start = $time;
+            $display("BOARD_JOB start=%0d fid=%0d t=%0t", board_starts, u_sys.job_id_r, $time);
+        end
+        if (u_sys.job_abort_p) begin
+            board_aborts = board_aborts + 1;
+            $display("BOARD_ABORT job=%0d blocks=%0d coord=%0d sched=%0d pix_sid=%0d bank0=%0d elapsed=%0t",
+                     board_starts, u_sys.u_core.blocks_done, u_sys.u_core.u_coord.state,
+                     u_sys.u_core.u_sched.cur_stripe, u_sys.u_core.dbg_pix_sid,
+                     u_sys.u_core.dbg_cur_sid0, $time - board_job_start);
+        end
+        if (u_sys.offer_valid_c && u_sys.offer_ready_c) begin
+            // A job can start late in its window. This optimistic deadline
+            // proves a miss; the reader remains the authoritative check.
+            stripe_ready_us = ($realtime - board_job_start)/1000.0;
+            stripe_deadline_us = (36.0*2200.0 + 192.0)*0.006727 +
+                                 u_sys.offer_data_c[54:48]*16.0*2200.0*0.006727;
+            stripe_margin_us = stripe_deadline_us - stripe_ready_us;
+            if (stripe_margin_us < min_stripe_margin_us) min_stripe_margin_us = stripe_margin_us;
+            if (stripe_margin_us < 0) late_stripes = late_stripes + 1;
+            $display("BOARD_STRIPE sid=%0d ready_us=%0.3f deadline_us=%0.3f margin_us=%0.3f",
+                     u_sys.offer_data_c[54:48], stripe_ready_us, stripe_deadline_us, stripe_margin_us);
+        end
+    end
+    always @(posedge vout_clk) if (rst_n) begin
+        board_uf_d <= st_uf;
+        if ((st_uf != board_uf_d) && (board_starts != 0)) begin
+            board_uf = board_uf + 1;
+            if (!$test$plusargs("EXPECT_UF")) dgc_errors = dgc_errors + 1;
+            $display("BOARD_UF stripe=%0d first=%b job=%0d elapsed=%0t blocks=%0d cstate=%0d coord=%0d sample_left=%0d",
+                     u_sys.u_reader.dbg_uf_stripe, u_sys.u_reader.dbg_uf_first,
+                     board_starts, $time - board_job_start, u_sys.u_core.blocks_done,
+                     u_sys.u_core.cstate, u_sys.u_core.u_coord.state, u_sys.u_core.sample_left);
+            if ($test$plusargs("FAIL_FAST") && !$test$plusargs("EXPECT_UF")) begin
+                `DGC_FINISH
+            end
+        end
+        if (de_out && check_frame && u_sys.u_reader.ok_dl) begin
+            board_checked = board_checked + 1;
+            checked_px = checked_px + 1;
+            if (rgb_out !== radial_expected[y_dl * 1920 + x_dl]) begin
+                dgc_errors = dgc_errors + 1;
+                if (dgc_errors < 5)
+                    $display("TEST_FAIL: radial displayed pixel (%0d,%0d) exp=%06h actual=%06h",
+                             x_dl, y_dl, radial_expected[y_dl * 1920 + x_dl], rgb_out);
+            end
+        end
+        if (u_sys.u_reader.frame_last && u_sys.u_reader.frame_ok)
+            board_frames = board_frames + 1;
+    end
+`endif
+
     integer n_beat = 0; integer n_cw = 0; integer n_px = 0; integer n_wr = 0;
+    // Test-only accounting distinguishes useful pixel records and head skips.
+    integer prof_rows=0, prof_head_bytes=0, prof_disc_cycles=0;
+    integer prof_px1=0, prof_px2=0, prof_empty_records=0, prof_wait_beat=0, prof_fill=0;
+    reg prof_done_d=0;
+    always @(posedge proc_clk) if (rst_n) begin
+        prof_done_d <= u_sys.core_frame_done;
+        if (u_sys.job_start_p) begin
+            prof_rows=0; prof_head_bytes=0; prof_disc_cycles=0;
+            prof_px1=0; prof_px2=0; prof_empty_records=0; prof_wait_beat=0; prof_fill=0;
+        end else if (u_sys.job_state == 1) begin
+            if (u_sys.u_core.u_fill.unpack_row_load) begin
+                prof_rows=prof_rows+1;
+                prof_head_bytes=prof_head_bytes+u_sys.u_core.u_fill.r_hs;
+            end
+            if (u_sys.u_core.u_fill.u_unpack.disc_phase && u_sys.u_core.u_fill.u_unpack.accepted)
+                prof_disc_cycles=prof_disc_cycles+1;
+            if (u_sys.u_core.u_fill.take_record) begin
+                case (u_sys.u_core.u_fill.up_fill_count)
+                    0: prof_empty_records=prof_empty_records+1;
+                    1: prof_px1=prof_px1+1;
+                    2: prof_px2=prof_px2+1;
+                endcase
+            end
+            if (u_sys.u_core.dbg_fill_wait_beat) prof_wait_beat=prof_wait_beat+1;
+            if (u_sys.u_core.fill_busy) prof_fill=prof_fill+1;
+        end
+        if (u_sys.core_frame_done && !prof_done_d)
+            $display("FILL_PROFILE rows=%0d head_bytes=%0d discard_cycles=%0d one_px=%0d two_px=%0d zero_px=%0d wait_beat=%0d fill=%0d",
+                     prof_rows,prof_head_bytes,prof_disc_cycles,prof_px1,prof_px2,prof_empty_records,prof_wait_beat,prof_fill);
+    end
     always @(posedge proc_clk) if (rst_n && u_sys.u_core.u_stripe.wr_fire && n_wr < 5) begin n_wr = n_wr + 1; $display("WR a=%0d d=%06h bank=%b", u_sys.u_core.u_stripe.waddr, u_sys.u_core.u_stripe.wdata, u_sys.u_core.u_stripe.wr_bank); end
     always @(posedge proc_clk) if (rst_n && u_sys.u_core.px_valid && u_sys.u_core.px_ready && n_px < 4) begin n_px = n_px + 1; $display("PXD rgb=%06h dx=%0d dy=%0d", u_sys.u_core.px_data[23:0], u_sys.u_core.px_data[34:24], u_sys.u_core.px_data[45:35]); end
     always @(posedge ddr_clk) if (rst_n && u_sys.ra_fifo_wr && n_beat < 2) begin n_beat = n_beat + 1; $display("BEATD %02h %02h %02h %02h %02h %02h", u_sys.ra_fifo_data[7:0], u_sys.ra_fifo_data[15:8], u_sys.ra_fifo_data[23:16], u_sys.ra_fifo_data[31:24], u_sys.ra_fifo_data[39:32], u_sys.ra_fifo_data[47:40]); end
@@ -700,22 +840,77 @@ module tb_jobs;
     // at 1, exactly like a reader that went black, so only job_abort can clear it.
     integer abort_state = 0;
     integer abort_wait  = 0;
+    reg abort_first_desc = 0;
+    integer abort_restarts = 0;
+    integer abort_checked = 0;
+    integer abort_pixel_errors = 0;
+    reg abort_clear_checked = 0;
+    always @(posedge proc_clk) if (rst_n && u_sys.job_abort_p) begin
+        #0.2;
+        if (u_sys.u_core.u_stripe.bank_state !== 12'd0)
+            `DGC_FAIL("job_abort did not clear all abandoned stripe banks")
+        abort_clear_checked = 1;
+    end
+    always @(posedge proc_clk) if (rst_n) begin
+        if (u_sys.job_start_p) begin
+            abort_first_desc <= 1'b1;
+            if (abort_state == 3) abort_restarts = abort_restarts + 1;
+        end
+        else if (u_sys.u_core.desc_valid && u_sys.u_core.desc_ready && abort_first_desc) begin
+            abort_first_desc <= 1'b0;
+            if ((u_sys.u_core.d_tag !== 0) || (u_sys.u_core.d_out_x !== 0) ||
+                (u_sys.u_core.d_out_y !== 0) || (u_sys.u_core.d_job_id !== u_sys.job_id_r)) begin
+                dgc_errors = dgc_errors + 1;
+                $display("TEST_FAIL: restart consumed stale first descriptor tag=%0d xy=(%0d,%0d) job=%0d expected_job=%0d",
+                         u_sys.u_core.d_tag, u_sys.u_core.d_out_x, u_sys.u_core.d_out_y,
+                         u_sys.u_core.d_job_id, u_sys.job_id_r);
+                if ($test$plusargs("FAIL_FAST")) begin
+                    `DGC_FINISH
+                end
+            end
+        end
+        if ((abort_restarts != 0) && !u_sys.u_core.job_flush &&
+            u_sys.u_core.px_valid && u_sys.u_core.px_ready) begin
+            abort_checked = abort_checked + 1;
+            if (u_sys.u_core.px_data[23:0] !==
+                radial_expected[u_sys.u_core.px_data[45:35] * 1920 + u_sys.u_core.px_data[34:24]]) begin
+                abort_pixel_errors = abort_pixel_errors + 1;
+                dgc_errors = dgc_errors + 1;
+                if (abort_pixel_errors < 4)
+                    $display("TEST_FAIL: recovered radial pixel (%0d,%0d) mismatch",
+                             u_sys.u_core.px_data[34:24], u_sys.u_core.px_data[45:35]);
+            end
+        end
+        if ((abort_state == 3) && u_sys.rel_src_valid &&
+            (u_sys.u_core.fill_busy || u_sys.row_valid))
+            `DGC_FAIL("aborted source slot released before outstanding DDR fill drained")
+    end
     always @(posedge proc_clk) begin
         if (rst_n) begin
             case (abort_state)
                 0: if (u_sys.job_start_p) begin
-                       force u_sys.u_core.u_stripe.reading[3] = 1'b1;
+                       if (!$test$plusargs("FILL_ABORT"))
+                           force u_sys.u_core.u_stripe.reading[3] = 1'b1;
                        abort_wait  <= 0;
                        abort_state <= 1;
                    end
                 1: begin
                        abort_wait <= abort_wait + 1;
-                       if (abort_wait == 20000) begin
+                       if ($test$plusargs("FILL_ABORT")) begin
+                           if (u_sys.u_core.fill_busy && u_sys.beat_valid_p && u_sys.beat_ready_p) begin
+                               force u_sys.job_wd = 24'hffffff;
+                               abort_state <= 2;
+                           end
+                       end
+                       else if (abort_wait == 20000) begin
                            release u_sys.u_core.u_stripe.reading[3];
                            abort_state <= 2;
                        end
                    end
-                2: if (u_sys.job_abort_p) abort_state <= 3;
+                2: if (u_sys.job_abort_p) begin
+                       if ($test$plusargs("FILL_ABORT")) release u_sys.job_wd;
+                       abort_state <= 3;
+                   end
                 default: ;
             endcase
         end
@@ -830,12 +1025,44 @@ module tb_jobs;
 `ifdef DGC_ABORT_TEST
         while ((jobs_done < 1) && (guard < 12_000_000)) begin
 `else
-        while ((jobs_done < 2) && (guard < 12_000_000)) begin
+        while ((jobs_done < ($test$plusargs("EXPECT_UF") ? 1 : 2)) && (guard < 12_000_000)) begin
 `endif
             @(posedge proc_clk);
             guard = guard + 1;
         end
         $display("TEST_INFO: waited %0d proc cycles, jobs_done=%0d", guard, jobs_done);
+        // Let the registered duration tap and its three-cycle monitor settle
+        // before the final performance snapshot clears job_us_max. A one-job
+        // abort test otherwise cleared K1 while that comparison was pending.
+        repeat (8) @(posedge proc_clk);
+        if ((jobs_done > 0) && (!k1_checked || (k1_errs != 0)))
+            `DGC_FAIL("completed-job duration check failed or never ran")
+
+`ifdef DGC_BOARD_RADIAL_TEST
+        if ($test$plusargs("EXPECT_UF")) begin
+            if ((jobs_done != 1) || (board_uf == 0) || (board_aborts != 0) ||
+                (job_blocks[0] != 4080) || (st_err != 0))
+                `DGC_FAIL("expected-underflow profile did not complete one job and reproduce starvation")
+            $display("TEST_INFO: EXPECTED_UF profile jobs=%0d uf=%0d min_margin_us=%0.3f late_stripes=%0d",
+                     jobs_done,board_uf,min_stripe_margin_us,late_stripes);
+            `DGC_FINISH
+        end
+`endif
+
+`ifdef DGC_BOARD_RADIAL_TEST
+        while ((board_frames < 2) && (guard < 12_000_000)) begin
+            @(posedge proc_clk);
+            guard = guard + 1;
+        end
+        repeat (5) @(posedge vout_clk);
+        if ((board_frames < 2) || (board_checked < 4147200) || (board_aborts != 0)) begin
+            dgc_errors = dgc_errors + 1;
+            $display("TEST_FAIL: board frames=%0d checked=%0d aborts=%0d", board_frames, board_checked, board_aborts);
+        end
+        $display("TEST_INFO: BOARD frames=%0d checked=%0d starts=%0d aborts=%0d underflows_after_start=%0d",
+                 board_frames, board_checked, board_starts, board_aborts, board_uf);
+        $display("TEST_INFO: BOARD min_margin_us=%0.3f late_stripes=%0d", min_stripe_margin_us,late_stripes);
+`endif
 
 `ifdef DGC_ABORT_TEST
         if (jobs_done < 1) begin
@@ -873,12 +1100,17 @@ module tb_jobs;
             dgc_errors = dgc_errors + 1;
             $display("TEST_FAIL: the job watchdog never aborted (state=%0d)", abort_state);
         end
-        if (u_sys.u_core.u_stripe.reading[3] !== 1'b0) begin
+        // Check at the abort edge above: bank3 may legitimately belong to the
+        // reader again when the recovered job's last stripe (67) is published.
+        if (!abort_clear_checked) begin
             dgc_errors = dgc_errors + 1;
-            $display("TEST_FAIL: bank3 is still READING after the abort");
+            $display("TEST_FAIL: the abort bank-clear check was never reached");
         end
         $display("TEST_INFO: abort regression: watchdog fired, first completed job after it ran %0d blocks",
                  job_blocks[0]);
+        if ((abort_checked != 2073600) || (abort_pixel_errors != 0))
+            `DGC_FAIL("recovered job did not produce exactly one full correct radial frame")
+        $display("TEST_INFO: recovered radial pixels=%0d errors=%0d", abort_checked, abort_pixel_errors);
 `endif
         $display("TEST_INFO: block switches: inline=%0d drain=%0d", n_hs, n_drain);
         end
@@ -978,9 +1210,14 @@ module tb_jobs;
             $display("TEST_FAIL: %0d of %0d first-stripe pixels differ from the identity image",
                      px_mismatch, checked_px);
         end
+`ifdef DGC_BOARD_RADIAL_TEST
+        else $display("TEST_INFO: aligned radial frames are exact (%0d pixels, %0d full frames)",
+                      board_checked, board_frames);
+`else
         else
             $display("TEST_INFO: aligned frames are exact (%0d first-stripe pixels, %0d good frames)",
                      checked_px, good_frames);
+`endif
 `endif
 
         `DGC_FINISH

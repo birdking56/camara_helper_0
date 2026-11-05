@@ -30,6 +30,7 @@ module tb_map_edge;
     reg clk = 0;
     always #(`DGC_T_PROC) clk = ~clk;
     reg rst_n = 0;
+    reg flush = 0;
 
     // ------------------------------------------------------- parameter regs
     reg  [1:0]  cfg_mode;
@@ -50,6 +51,7 @@ module tb_map_edge;
     wire [95:0] out_coord;
 
     dgc_map_pipeline u_dut (
+        .flush(flush),
         .clk              (clk),
         .rst_n            (rst_n),
         .cfg_mode         (cfg_mode),
@@ -310,6 +312,22 @@ module tb_map_edge;
             $display("TEST_FAIL: E7 mode 3 coordinate fields not zeroed"); end
         $display("TEST_INFO: E7 unsupported mode 3 is flagged, not silently mis-mapped");
         cfg_mode = 2'd1;
+
+        // E9: cancel a full pipeline while its output is held by backpressure.
+        // No old record may reappear, and the next input must retain alignment.
+        cfg_mode = 2'd0;
+        out_ready = 0;
+        for (i = 0; i < 8; i = i + 1) drive(300+i, 200+i);
+        wait (out_valid);
+        repeat (4) @(posedge clk);
+        @(negedge clk); flush = 1;
+        repeat (2) @(posedge clk); #0.2;
+        if (out_valid || !in_ready) `DGC_FAIL("E9 flush failed to cancel a stalled map pipeline")
+        @(negedge clk); flush = 0; out_ready = 1;
+        repeat (30) @(posedge clk);
+        if (qwp != qrp) `DGC_FAIL("E9 stale map output returned after flush")
+        one_case(123, 456, 1, 0, 123, 456, 0, 0, "E9 restart after held output");
+        $display("TEST_INFO: E9 valid-only flush cancels a stalled pipeline; next record exact");
 
         $display("TEST_INFO: directed edge cases checked = %0d", checked);
         `DGC_FINISH

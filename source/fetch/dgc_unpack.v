@@ -12,13 +12,13 @@
 //   output                      : 1 or 2 pixels per cycle, same row, x and x+1
 //   carry                       : the RGB splice restarts at every row
 //
-// Why a "1 / 3 / 6 byte" consumer instead of a barrel shifter
+// Fixed-distance shifts instead of a barrel shifter
 //   The obvious implementation shifts a 272-bit window by an arbitrary byte
 //   count, which costs a five-level 256-bit barrel shifter for the one thing
 //   this module does most. Here every cycle consumes a *fixed* number of bytes -
-//   1 (head skip), 3 (one pixel) or 6 (two pixels) - so the shifter reduces to a
-//   three-way multiplexer. head_skip is discarded one byte per cycle, which adds
-//   at most 31 cycles per row: about 1 % of a 53,333-cycle stripe deadline.
+//   HEAD_SKIP_BYTES (head skip group), 1 (remaining head bytes), 3 (one pixel)
+//   or 6 (two pixels). The production four-byte group needs at most ten discard
+//   cycles for head_skip=31. Skips are internal work and emit no cache record.
 //
 // Throughput
 //   A beat is 32 bytes = 10 or 11 pixels. With the carry the sequence over three
@@ -34,7 +34,9 @@
 //   consumer accepts, so a stalled source cache never loses a pixel.
 //-----------------------------------------------------------------------------
 
-module dgc_unpack (
+module dgc_unpack #(
+    parameter integer HEAD_SKIP_BYTES = 4   // supported fixed steps: 1, 4, 8
+) (
     input  wire         clk,
     input  wire         rst_n,
 
@@ -104,12 +106,16 @@ module dgc_unpack (
     //   bc_nz      = (bcnt       != 0)
     //   bl_nz/ge3/ge6 = (bytes_left != 0 / >= 3 / >= 6)
     reg  disc_done;         // disc_left == 0
+    reg  disc_bulk;         // disc_left >= HEAD_SKIP_BYTES
+    reg  bc_bulk;           // bcnt >= HEAD_SKIP_BYTES
+    reg  bc_bulk_room;      // bcnt <= HEAD_SKIP_BYTES + 2
     reg  bc_nz;             // bcnt != 0
     reg  bl_nz;             // bytes_left != 0
     reg  bl_ge3, bl_ge6;    // bytes_left >= 3 / >= 6
     reg  bl_eq3, bl_eq6;    // last one/two-pixel emission
     reg  bc_le3, bc_le8;    // refill room after discarding 1 / emitting 6 bytes
     wire disc_phase = row_active && !disc_done && bc_nz;
+    wire disc_take_bulk = disc_phase && disc_bulk && bc_bulk;
     wire px_phase   = row_active && disc_done && bl_nz;
 
     // can_one must NOT require bytes_left < 6: when bcnt sits between 3 and 5
@@ -125,17 +131,18 @@ module dgc_unpack (
     wire can_one = px_phase && ge3 && bl_ge3;
     wire taking  = disc_phase | can_two | can_one;
 
-    wire [5:0] take_bytes  = disc_phase ? 6'd1 : (can_two ? 6'd6 : (can_one ? 6'd3 : 6'd0));
+    localparam [5:0] HEAD_STEP = HEAD_SKIP_BYTES;
+    wire [5:0] take_bytes  = disc_phase ? (disc_take_bulk ? HEAD_STEP : 6'd1) :
+                                       (can_two ? 6'd6 : (can_one ? 6'd3 : 6'd0));
     wire [1:0] take_pixels = can_two ? 2'd2 : (can_one ? 2'd1 : 2'd0);
 
-    // Exactly one of three fixed shifts. Writing them as three separate
-    // fixed-distance slices (pure wiring) and then a 3:1 mux is much faster
-    // than one variable 272-bit shift, which synthesis turns into a barrel
-    // shifter (~3 ns at 225 MHz).
+    // Every shift is a fixed-distance slice (pure wiring). The extra bulk
+    // choice is a single constant-distance mux, not a variable byte shifter.
     wire [271:0] by_8  = {8'd0,  bybuf[271:8]};
     wire [271:0] by_24 = {24'd0, bybuf[271:24]};
     wire [271:0] by_48 = {48'd0, bybuf[271:48]};
-    wire [271:0] buf_after = disc_phase ? by_8 :
+    wire [271:0] by_bulk = {{(8*HEAD_SKIP_BYTES){1'b0}}, bybuf[271:(8*HEAD_SKIP_BYTES)]};
+    wire [271:0] buf_after = disc_phase ? (disc_take_bulk ? by_bulk : by_8) :
                              can_two ? by_48 : can_one ? by_24 : bybuf;
 
     wire [5:0] bcnt_after  = bcnt - take_bytes;
@@ -144,7 +151,9 @@ module dgc_unpack (
 
     // The buffer advances only when the consumer accepts the beat, otherwise a
     // stalled cache would lose the pixels already extracted.
-    wire accepted = (!taking) || fill_ready;
+    // Discarding padding is independent of cache readiness. Only real pixels
+    // use the fill valid/ready handshake and must stay stable under a stall.
+    wire accepted = disc_phase || (!taking) || fill_ready;
 
     // -------------------------------------------------------------- beat input
     // A new beat may only be loaded once at most two bytes are left over, because
@@ -153,7 +162,7 @@ module dgc_unpack (
     // decode -> subtract -> zero/room compare chain on the 272-bit buffer CE.
     wire more_after = disc_phase ? bl_nz : can_two ? !bl_eq6 :
                                       can_one ? !bl_eq3 : bl_nz;
-    wire room_after = disc_phase ? bc_le3 : can_two ? bc_le8 :
+    wire room_after = disc_phase ? (disc_take_bulk ? bc_bulk_room : bc_le3) : can_two ? bc_le8 :
                                       can_one ? !ge6 : !ge3;
     wire need_more = row_active && more_after && room_after;
 
@@ -194,19 +203,15 @@ module dgc_unpack (
         (bcnt_after == 6'd1) ? {8'd0,  in_data, buf_after[7:0]}      :
                                 {in_data, buf_after[15:0]};
 
-    // Always-write form: bybuf's clock enable becomes constant, so the long
-    // disc_left -> taking -> CE route is replaced by a D-side mux. When nothing
-    // is accepted the mux feeds bybuf back to itself.
-    // 2026-11-01 timing: explicit write enable instead of the feedback mux, so the
-    // tool does not derive a 272-load enable out of the data mux.  The data path is
-    // now a plain 2:1 select.
+    // Keep the hold function on the explicit write enable. Counter thresholds
+    // are carried as flags so the wide buffer does not wait for fresh compares.
     wire [271:0] by_mux   = load_beat ? load_bybuf : buf_after;
     wire [5:0]   bcnt_next = load_beat ? ({2'b0, bcnt_after} + 6'd32) :
                                          (taking ? bcnt_after : bcnt);
     wire         bybuf_wr = accepted & (load_beat | taking);
 
     // ------------------------------------------------------------------ output
-    assign fill_valid     = taking;
+    assign fill_valid     = can_two | can_one;
     assign fill_set       = cur_set;
     assign fill_tile_tag  = cur_tag;
     assign fill_x         = local_x;
@@ -231,6 +236,9 @@ module dgc_unpack (
             ge3           <= 1'b0;
             ge6           <= 1'b0;
             disc_done     <= 1'b1;      // disc_left == 0
+            disc_bulk     <= 1'b0;
+            bc_bulk       <= 1'b0;
+            bc_bulk_room  <= 1'b1;
             bc_nz         <= 1'b0;      // bcnt == 0
             bl_nz         <= 1'b0;      // bytes_left == 0
             bl_ge3        <= 1'b0;
@@ -255,6 +263,9 @@ module dgc_unpack (
             ge3           <= 1'b0;
             ge6           <= 1'b0;
             disc_done     <= (row_head_skip == 5'd0);
+            disc_bulk     <= (row_head_skip >= HEAD_SKIP_BYTES);
+            bc_bulk       <= 1'b0;
+            bc_bulk_room  <= 1'b1;
             bc_nz         <= 1'b0;
             bl_nz         <= (row_valid_bytes != 8'd0);
             bl_ge3        <= (row_valid_bytes >= 8'd3);
@@ -287,6 +298,8 @@ module dgc_unpack (
                 bc_nz <= (bcnt_next != 6'd0);
                 bc_le3 <= (bcnt_next <= 6'd3);
                 bc_le8 <= (bcnt_next <= 6'd8);
+                bc_bulk <= (bcnt_next >= HEAD_SKIP_BYTES);
+                bc_bulk_room <= (bcnt_next <= HEAD_SKIP_BYTES + 2);
             end
 
             // one cycle can accept a beat and emit pixels at the same time, so
@@ -294,8 +307,11 @@ module dgc_unpack (
             if (accepted) begin
                 if (taking) begin
                     if (disc_phase) begin
-                        disc_left <= disc_left - 5'd1;
-                        disc_done <= (disc_left == 5'd1);
+                        disc_left <= disc_left - take_bytes[4:0];
+                        disc_done <= disc_take_bulk ? (disc_left == HEAD_SKIP_BYTES) :
+                                                     (disc_left == 5'd1);
+                        disc_bulk <= disc_take_bulk ? (disc_left >= 2*HEAD_SKIP_BYTES) :
+                                                     (disc_left >= HEAD_SKIP_BYTES + 1);
                     end
                     else begin
                         bytes_left <= bytes_after;
@@ -324,6 +340,13 @@ module dgc_unpack (
                 row_active <= 1'b0;
         end
     end
+
+`ifdef DGC_SIM
+    initial begin
+        if (HEAD_SKIP_BYTES != 1 && HEAD_SKIP_BYTES != 4 && HEAD_SKIP_BYTES != 8)
+            $fatal(1, "unsupported fixed head skip step");
+    end
+`endif
 
 endmodule
 

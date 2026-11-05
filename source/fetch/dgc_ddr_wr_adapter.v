@@ -102,6 +102,9 @@ module dgc_ddr_wr_adapter #(
     // buffer-write cone.
     reg  [287:0] in_data;
     reg          in_valid;
+    reg          in_disc;
+    reg          input_seen;
+    reg  [31:0]  input_next_addr;
 
     // ------------------------------------------------------------ burst state
     localparam [1:0] S_IDLE = 2'd0;
@@ -115,7 +118,9 @@ module dgc_ddr_wr_adapter #(
     // -------------------------------------------------- input side decisions
     wire [31:0] in_addr = in_data[287:256];
 
-    wire disc_now = in_valid & prev_valid & (in_addr != (prev_addr + 32'd32));
+    // Compare at the input-register boundary, where each accepted beat is
+    // sequenced, rather than in the CE cone of the 32x256-bit write buffer.
+    wire disc_now = in_valid & prev_valid & in_disc;
     wire flush    = (count > 0) & disc_now;
 
     // stop accepting beats while the previous frame's tail is being flushed, so
@@ -129,10 +134,16 @@ module dgc_ddr_wr_adapter #(
         if (!rst_n) begin
             in_data  <= 288'd0;
             in_valid <= 1'b0;
+            in_disc <= 1'b0;
+            input_seen <= 1'b0;
+            input_next_addr <= 32'd0;
         end
         else if (beat_valid && beat_ready) begin
             in_data  <= beat_data;
             in_valid <= 1'b1;
+            in_disc <= input_seen && (beat_data[287:256] != input_next_addr);
+            input_seen <= 1'b1;
+            input_next_addr <= beat_data[287:256] + 32'd32;
         end
         else if (push) begin
             in_valid <= 1'b0;
@@ -140,13 +151,18 @@ module dgc_ddr_wr_adapter #(
     end
 
     // -------------------------------------------------------- burst length
-    wire [11:0] page_off  = buf_addr[rp][11:0];
-    wire [7:0]  page_beats = (page_off == 12'd0) ? 8'd128 : ((12'd4096 - page_off) >> 5);
-    wire [7:0]  want       = (count >= 16) ? 8'd16 : {2'b00, count};
-    wire [7:0]  len_min    = (want < page_beats) ? want : page_beats;
+    // All input addresses are 32-byte aligned and native bursts have at most
+    // 16 beats. Only the final 512 bytes of a 4 KiB page can shorten a burst.
+    // Work directly in AXI's beats-minus-one encoding: in that region the page
+    // limit is 15 - addr[8:5], which is just a four-bit complement. This removes
+    // the pointer mux -> 12-bit subtract -> compare -> subtract path to AWLEN.
+    wire [31:0] head_addr = buf_addr[rp];
+    wire [3:0] want_last = (count >= 16) ? 4'hf : (count[3:0] - 4'd1);
+    wire [3:0] page_last = (&head_addr[11:9]) ? ~head_addr[8:5] : 4'hf;
+    wire [3:0] issue_last = (want_last < page_last) ? want_last : page_last;
     wire        can_issue  = (state == S_IDLE) && (count > 0) &&
                              (flush || (count >= 16) || any_last);
-    wire [4:0]  issue_len  = (len_min == 0) ? 5'd1 : len_min[4:0];
+    wire [4:0]  issue_len  = {1'b0, issue_last} + 5'd1;
 
     assign wdata = buf_data[rp];
     assign wstrb = 32'hFFFF_FFFF;
@@ -207,7 +223,7 @@ module dgc_ddr_wr_adapter #(
             if (can_issue) begin
                 // native address unit is one 32-bit storage word: byte address >> 2
                 awaddr  <= buf_addr[rp][29:2];
-                awlen   <= issue_len - 5'd1;
+                awlen   <= issue_last;
                 burst_len <= issue_len;
                 beat_idx  <= 5'd0;
                 awvalid   <= 1'b1;

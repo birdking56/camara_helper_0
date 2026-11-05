@@ -3,20 +3,20 @@ project name,camara_helper_0.pds
 
 Single Seed:
 Seed,State,Convergence,Setup(Slow),Setup(Fast),Hold(Slow),Hold(Fast),Recovery(Slow),Recovery(Fast),Removal(Slow),Removal(Fast),PBM-GP,PBM-PreGP,PBM-PostGP,LP,Total Placement Cpu Time,Detailed routing,Total Routing Cpu Time,Wire Length After Post-GP,Wire Length After LP,Wire Length After DP,Routing Arc Length,Worst Slack After GP Timing,Worst Slack After LP Timing,Worst Slack Before RP,Worst Slack Before DP,Worst Slack After DP,Worst Slack After Placement,Worst Slack After TA By Preroute,TNS After DP,TNS Before Route,Setup(Slow) Total Failing TNS,Setup(Slow) Total Failing Endpoints,Hold(Slow) Total Failing THS,Hold(Slow) Total Failing Endpoints
-single,OK,Fail,-0.206,0.671,0.137,0.100,0.197,2.090,0.345,0.229,NA,NA,NA,7.89,97.39,181.92,246.41,233611,412878,475395,395701,NA,NA,-1203,-1203,439,-141,NA,0,-680,-0.369,3,0.000,0
+single,OK,Fail,-0.011,0.735,0.136,0.102,0.625,2.441,0.350,0.248,NA,NA,NA,16.98,203.28,287.84,438.41,224934,416310,428606,390285,NA,NA,-159,-105,439,439,NA,0,0,-0.012,2,0.000,0
 Pass Rate/Convergence Rate,100.00%,0.00%
 
 Synthesize:
-control_set,497
+control_set,502
 Synthesize Performance Summary:
 slack category,Synthesize Setup WNS,Synthesize Setup TNS,Synthesize Recovery WNS,Synthesize Recovery TNS
-slack value,-0.864,-8.322,0.980,0.000
-Synthesize Process Cpu Time,0h:3m:27s
+slack value,-0.864,-120.070,0.818,0.000
+Synthesize Process Cpu Time,0h:4m:2s
 
 Device Map:
 Device Map Resource Usage Summary:
 Logic Utilization,LUT,FF,DRM,APM,Distributed RAM,HSSTHP,USCM,HCKB,RCKB
-Used,17003,24863,123,71,466,NA,8,0,2
+Used,17252,24811,123,71,466,NA,8,0,2
 Available,66600,133200,155,240,19900,NA,32,96,24
 Utilization(%),26%,19%,80%,30%,3%,NA,25%,0%,9%
 Device Map Process Cpu Time,0h:0m:52s
@@ -26,7 +26,7 @@ top module,dgc_top_sys
 compile,
 synthesize," -ads "
 device map,
-place & route," -gplace_seed 3 "
+place & route,
 
 Test Parameters Configurations:
 testparam,
